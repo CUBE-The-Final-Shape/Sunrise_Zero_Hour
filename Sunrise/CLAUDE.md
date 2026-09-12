@@ -193,9 +193,16 @@ mission restart. Dev-mode sandbox relaxations still active.
   `sc_military_hallway_destruction`, graph `0x80BEB612`, one key) and start the scene: the pod
   opens (~2.8s) and three Legionaries come out. Default counts give one; `replace` mode keeps the
   pod shut; activating the scene before its key finishes it empty and a later key does not
-  restart it (only a new generation does). `sq_hangar_a_b` (own spawn rule) never spawns from the
-  hallway; `place{ spawn_rule = <sr_* slot>, spawn_lane = 1|2 }` (wire fields .11/.12) changed
-  nothing (.12 even suppressed the placement) — the option stays but is unused.
+  restart it (only a new generation does). `sq_hangar_a_b` (own spawn rule) does not spawn from the
+  hallway but does from `pt_mount_ship` (a pod crashes down with its three Legionaries).
+  `place{ spawn_rule = <type-66 sr_* slot>, spawn_lane = 1 }` (wire field .11) **selects that
+  spawn rule**: `sq_hangar_fodder_b` placed with `sr_caball_hangar_fodder` arrived in a crashing
+  pod. `sr_ceiling_spawn_melee/rear` did nothing there. **Never put a point set (type 48) in
+  .12 (`spawn_lane = 2`)**: it stalls the client's main loop, like the action-program targets.
+  The Legionary jump over the command ship at `pt_escape_explosion_a` is still unexplained:
+  none of the 14 actor states is a jump (2/4/6/8/10/12/14 resume combat, 3/5/7/13 are poses,
+  11 is a console interaction, 9 the scene entrance), and `sc_explosion_a` has no squad
+  participant.
 - leaving `pt_hangar_spawn_pod` (228): open the first door, place `sq_hangar_overlook_b_b`.
 - `pt_amanda_skip` (219): on entry instantiate the command ship (`cabal_destroyer`, hangar copy
   `slot/80b5036a/000000/0000/0004`) and open the second door; on exit instantiate the ten

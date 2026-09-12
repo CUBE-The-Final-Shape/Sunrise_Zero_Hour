@@ -81,6 +81,15 @@ CurrentSliceSet current_slice_set() noexcept {
     return value;
 }
 
+/** Reads the last fresh boot-flow step, or -1 when none is fresh. */
+std::int32_t raw_step() noexcept {
+    const std::uint64_t published = g_publishedTick.load(std::memory_order_acquire);
+    if (published == 0 || GetTickCount64() - published >= kStepStaleMs) {
+        return kNoStep;
+    }
+    return g_publishedStep.load(std::memory_order_relaxed);
+}
+
 /** Reports whether the player is in a loaded destination. */
 bool in_world() noexcept {
     if (g_publishedStep.load(std::memory_order_relaxed) != kInWorld) {

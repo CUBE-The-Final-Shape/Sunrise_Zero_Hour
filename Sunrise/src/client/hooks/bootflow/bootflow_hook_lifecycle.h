@@ -36,6 +36,14 @@ void poll_current_slice_set() noexcept;
 [[nodiscard]] CurrentSliceSet current_slice_set() noexcept;
 
 /**
+ * The last fresh boot-flow step the frame poll read, or -1 when none is fresh.
+ * Only step 38 (`activity:in_world`) is named so far; other values are real but unidentified.
+ * Exposed for diagnosing the boot-flow sequence a mission attach goes through, not as a proven
+ * stable API -- prefer `in_world()` once a step's meaning is actually established.
+ */
+[[nodiscard]] std::int32_t raw_step() noexcept;
+
+/**
  * Reports whether the player is in a loaded destination.
  * The step is published by a frame poll, so a tick that stops reads as out of world rather than
  * as the last step for ever.

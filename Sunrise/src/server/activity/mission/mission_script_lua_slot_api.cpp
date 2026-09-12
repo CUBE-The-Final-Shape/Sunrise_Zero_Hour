@@ -1082,6 +1082,9 @@ constexpr std::int8_t kFilterModeInside = 1;
  * Arms client-side geometric detection for one type-31 trigger, so `on_event_player_trigger`
  * fires the same way it would for a client-reported crossing (the retail client never sends one
  * for the local player). Synchronous: the watcher is armed, or refused, before this call returns.
+ * @return armed (boolean), and when armed the resolved type-60 volume's registry_key, slot_type
+ * and slot_index -- the same triple `on_event_player_trigger` reports as `volume_*`, so a script
+ * watching more than one trigger can tell them apart without hardcoding a value read off one test.
  */
 [[nodiscard]] int slot_watch_trigger(lua_State* state) {
     const auto* const handle =
@@ -1096,13 +1099,25 @@ constexpr std::int8_t kFilterModeInside = 1;
     static constexpr std::array<std::string_view, 0> kDeclared{};
     refuse_unknown_arguments(state, kDeclared);
     Impl* const impl = impl_from_state(state);
+    std::uint32_t volumeRegistryKey = 0;
+    std::uint32_t volumeSlotType = 0;
+    std::uint32_t volumeSlotIndex = 0;
     const bool armed = impl != nullptr && impl->definitions.registerTriggerWatch != nullptr
                        && impl->definitions.registerTriggerWatch(impl->definitions.context,
                                                                  definition.registryKey,
                                                                  definition.slotType,
-                                                                 definition.slotIndex);
+                                                                 definition.slotIndex,
+                                                                 volumeRegistryKey,
+                                                                 volumeSlotType,
+                                                                 volumeSlotIndex);
     lua_pushboolean(state, armed ? 1 : 0);
-    return 1;
+    if (!armed) {
+        return 1;
+    }
+    lua_pushinteger(state, static_cast<lua_Integer>(volumeRegistryKey));
+    lua_pushinteger(state, static_cast<lua_Integer>(volumeSlotType));
+    lua_pushinteger(state, static_cast<lua_Integer>(volumeSlotIndex));
+    return 4;
 }
 
 /** Publishes one scene generation and its cumulative authored event keys. */

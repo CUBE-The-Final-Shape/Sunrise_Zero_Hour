@@ -94,13 +94,19 @@ std::array<WatchEntry, kMaxWatches> g_watches{};
     return false;
 }
 
-/** Encodes and submits one synthetic schema-0x8080879F incident for a containment transition. */
-void submit_transition(const Identity& identity) noexcept {
+/**
+ * Encodes and submits one synthetic schema-0x8080879F incident for a containment transition.
+ * The real wire schema carries no enter/exit bit (the retail client only ever seems to report
+ * one direction), so `resolvedObjectId` -- otherwise unused by `resolve()` -- carries it here:
+ * 0 for entered, 1 for exited. `on_event_player_trigger`'s `resolved_object_id` field already
+ * exposes this to Lua, so no event-schema change was needed to add exit reporting.
+ */
+void submit_transition(const Identity& identity, bool entering) noexcept {
     player_trigger_incident::Payload payload{};
     payload.registryKey = identity.registryKey;
     payload.slotType = static_cast<std::int8_t>(identity.slotType);
     payload.slotIndex = static_cast<std::int16_t>(identity.slotIndex);
-    payload.resolvedObjectId = 0;
+    payload.resolvedObjectId = entering ? 0U : 1U;
 
     std::array<std::byte, player_trigger_incident::kPayloadBytes> body{};
     if (!player_trigger_incident::encode(payload, body)) {
@@ -211,7 +217,11 @@ void poll() noexcept {
     }
     // Transitions are collected under the lock and submitted after it is released, since
     // `submit_incident` takes the host runtime's own separate lock.
-    std::array<Identity, kMaxWatches> transitioned{};
+    struct Transition final {
+        Identity identity{};
+        bool entering{};
+    };
+    std::array<Transition, kMaxWatches> transitioned{};
     std::size_t transitionCount = 0;
 
     AcquireSRWLockExclusive(&g_lock);
@@ -225,18 +235,18 @@ void poll() noexcept {
                                      position.position[2]);
         if (inside != entry.inside) {
             entry.inside = inside;
-            if (inside && transitionCount < transitioned.size()) {
-                transitioned[transitionCount++] = entry.identity;
+            if (transitionCount < transitioned.size()) {
+                transitioned[transitionCount++] = {entry.identity, inside};
             }
         }
     }
     ReleaseSRWLockExclusive(&g_lock);
 
-    // Only the entry transition is reported: the mission's own type-60 resolve fans this single
-    // wire identity out to whichever authored volumes actually reference this source slot, the
-    // same way it would for a real client-sent incident.
+    // The mission's own type-60 resolve fans this single wire identity out to whichever authored
+    // volumes actually reference this source slot, the same way it would for a real
+    // client-sent incident; the entering/exiting direction rides along in resolvedObjectId.
     for (std::size_t index = 0; index < transitionCount; ++index) {
-        submit_transition(transitioned[index]);
+        submit_transition(transitioned[index].identity, transitioned[index].entering);
     }
 }
 

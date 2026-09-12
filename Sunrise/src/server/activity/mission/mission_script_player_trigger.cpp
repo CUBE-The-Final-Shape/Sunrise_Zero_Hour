@@ -21,6 +21,44 @@ constexpr std::uint8_t kTargetSlotType = 60;
            && left.volumeSlotType == right.volumeSlotType && left.slotType == right.slotType;
 }
 
+/**
+ * A payload naming slot type 60 directly names its own type-60 target table, bypassing the
+ * type-31 incoming-reference join entirely. This is used only for a trigger volume that has no
+ * type-31 source at all in the extracted data (confirmed absent by sweeping every plausible
+ * type-31 slot index on its owning object): nothing sends this over a real wire, since the retail
+ * client only ever names a genuine type-31 source, so this only ever runs for our own
+ * client-synthesized payloads.
+ */
+[[nodiscard]] ResolveStatus resolve_direct_target(
+    const catalog::Snapshot& snapshot,
+    const middleware::bap::activity_message::player_trigger_incident::Payload& payload,
+    Source& output) noexcept {
+    output = {};
+    bool found = false;
+    for (const catalog::TriggerVolumeTable& table : snapshot.triggerVolumeTables) {
+        if (table.registryKey != payload.registryKey || table.slotType != kTargetSlotType
+            || table.slotIndex != static_cast<std::uint16_t>(payload.slotIndex)) {
+            continue;
+        }
+        const Source candidate{table.registryKey,
+                               0,
+                               table.registryKey,
+                               0,
+                               0,
+                               table.slotIndex,
+                               table.slotIndex,
+                               table.slotType,
+                               static_cast<std::uint8_t>(payload.slotType)};
+        if (found && !same_source(output, candidate)) {
+            output = {};
+            return ResolveStatus::ambiguous;
+        }
+        output = candidate;
+        found = true;
+    }
+    return found ? ResolveStatus::ready : ResolveStatus::absent;
+}
+
 } // namespace
 
 /** Resolves the type-31 volume the payload names and its generated type-60 target. */
@@ -29,6 +67,9 @@ resolve(const catalog::Snapshot& snapshot,
         const middleware::bap::activity_message::player_trigger_incident::Payload& payload,
         Source& output) noexcept {
     output = {};
+    if (static_cast<std::uint8_t>(payload.slotType) == kTargetSlotType) {
+        return resolve_direct_target(snapshot, payload, output);
+    }
     bool found = false;
     for (std::size_t ownerRow = 0; ownerRow < snapshot.triggerVolumeOwners.size(); ++ownerRow) {
         const catalog::TriggerVolumeOwner& owner = snapshot.triggerVolumeOwners[ownerRow];

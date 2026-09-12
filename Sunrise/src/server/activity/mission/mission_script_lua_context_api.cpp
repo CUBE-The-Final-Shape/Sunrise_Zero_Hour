@@ -96,6 +96,126 @@ namespace {
     return 1;
 }
 
+/**
+ * Exploratory: true once the client-side physics hook has a live local-player body. Not reset on
+ * activity attach, so a single true reading does not prove a fresh spawn; a script investigating
+ * this as a spawn signal should watch for its own transition instead.
+ */
+[[nodiscard]] int context_player_position_present(lua_State* state) {
+    static_cast<void>(luaL_checkudata(state, 1, kContextMetatable));
+    Impl* const impl = impl_from_state(state);
+    const bool present = impl != nullptr && impl->definitions.playerPositionPresent != nullptr
+                         && impl->definitions.playerPositionPresent(impl->definitions.context);
+    lua_pushboolean(state, present ? 1 : 0);
+    return 1;
+}
+
+/**
+ * Exploratory: the client's raw boot-flow step. Only one value is named so far
+ * (`activity:in_world` = 38); this is for observing the real spawn sequence, not a stable API.
+ */
+[[nodiscard]] int context_bootflow_step(lua_State* state) {
+    static_cast<void>(luaL_checkudata(state, 1, kContextMetatable));
+    Impl* const impl = impl_from_state(state);
+    const std::int32_t step = impl == nullptr || impl->definitions.bootflowStep == nullptr
+                                  ? -1
+                                  : impl->definitions.bootflowStep(impl->definitions.context);
+    lua_pushinteger(state, step);
+    return 1;
+}
+
+/**
+ * Diagnostic tool: resolves the type-31 source of the Nth trigger row the debug "Scriptable
+ * Browser" trigger-volume panel would list for one bubble index (its bubble filter value, not a
+ * slice-set/region index), assuming no text/scope filter is active there.
+ * @return ok (boolean); when true, registry_key, slot_type, slot_index (nil otherwise);
+ * match_count; total_rows (bubble-matching row count, so total_rows < visible_index means that
+ * row does not exist at all); table_registry_key/table_slot_type/table_slot_index -- the row's
+ * own type-60 identity, always populated once the row is found even if match_count ~= 1, so it
+ * can be compared against a volume already resolved by `watch_trigger()` elsewhere.
+ */
+[[nodiscard]] int context_find_trigger_by_bubble(lua_State* state) {
+    static_cast<void>(luaL_checkudata(state, 1, kContextMetatable));
+    const lua_Integer bubbleIndex = luaL_checkinteger(state, 2);
+    const lua_Integer visibleIndex = luaL_checkinteger(state, 3);
+    if (visibleIndex <= 0 || visibleIndex > (std::numeric_limits<std::uint32_t>::max)()) {
+        return luaL_error(state, "visible_index must be a positive integer");
+    }
+    Impl* const impl = impl_from_state(state);
+    std::uint32_t registryKey = 0;
+    std::uint32_t slotType = 0;
+    std::uint32_t slotIndex = 0;
+    std::uint32_t matchCount = 0;
+    std::uint32_t totalRows = 0;
+    std::uint32_t tableRegistryKey = 0;
+    std::uint32_t tableSlotType = 0;
+    std::uint32_t tableSlotIndex = 0;
+    const bool ok = impl != nullptr && impl->definitions.findTriggerByBubbleVisibleIndex != nullptr
+                   && impl->definitions.findTriggerByBubbleVisibleIndex(
+                       impl->definitions.context,
+                       static_cast<std::int32_t>(bubbleIndex),
+                       static_cast<std::uint32_t>(visibleIndex),
+                       registryKey,
+                       slotType,
+                       slotIndex,
+                       matchCount,
+                       totalRows,
+                       tableRegistryKey,
+                       tableSlotType,
+                       tableSlotIndex);
+    lua_pushboolean(state, ok ? 1 : 0);
+    if (ok) {
+        lua_pushinteger(state, static_cast<lua_Integer>(registryKey));
+        lua_pushinteger(state, static_cast<lua_Integer>(slotType));
+        lua_pushinteger(state, static_cast<lua_Integer>(slotIndex));
+    } else {
+        lua_pushnil(state);
+        lua_pushnil(state);
+        lua_pushnil(state);
+    }
+    lua_pushinteger(state, static_cast<lua_Integer>(matchCount));
+    lua_pushinteger(state, static_cast<lua_Integer>(totalRows));
+    lua_pushinteger(state, static_cast<lua_Integer>(tableRegistryKey));
+    lua_pushinteger(state, static_cast<lua_Integer>(tableSlotType));
+    lua_pushinteger(state, static_cast<lua_Integer>(tableSlotIndex));
+    return 9;
+}
+
+/**
+ * Arms client-side geometric detection for one type-31 slot named by its raw wire identity
+ * (registry_key, slot_type, slot_index) rather than a resolved Lua slot handle -- for a trigger
+ * `context:slot(...)` cannot name, such as an unnamed one found via `find_trigger_by_bubble`.
+ * @return armed (boolean), and when armed the resolved type-60 volume's registry_key, slot_type
+ * and slot_index, exactly like `slot:watch_trigger()`.
+ */
+[[nodiscard]] int context_watch_trigger_identity(lua_State* state) {
+    static_cast<void>(luaL_checkudata(state, 1, kContextMetatable));
+    const lua_Integer registryKey = luaL_checkinteger(state, 2);
+    const lua_Integer slotType = luaL_checkinteger(state, 3);
+    const lua_Integer slotIndex = luaL_checkinteger(state, 4);
+    Impl* const impl = impl_from_state(state);
+    std::uint32_t volumeRegistryKey = 0;
+    std::uint32_t volumeSlotType = 0;
+    std::uint32_t volumeSlotIndex = 0;
+    const bool armed = impl != nullptr && impl->definitions.registerTriggerWatch != nullptr
+                       && impl->definitions.registerTriggerWatch(
+                           impl->definitions.context,
+                           static_cast<std::uint32_t>(registryKey),
+                           static_cast<std::uint32_t>(slotType),
+                           static_cast<std::uint32_t>(slotIndex),
+                           volumeRegistryKey,
+                           volumeSlotType,
+                           volumeSlotIndex);
+    lua_pushboolean(state, armed ? 1 : 0);
+    if (!armed) {
+        return 1;
+    }
+    lua_pushinteger(state, static_cast<lua_Integer>(volumeRegistryKey));
+    lua_pushinteger(state, static_cast<lua_Integer>(volumeSlotType));
+    lua_pushinteger(state, static_cast<lua_Integer>(volumeSlotIndex));
+    return 4;
+}
+
 /** Resolves the squad one Lua argument names, by handle or by index. */
 [[nodiscard]] bool resolve_squad(lua_State* state, int selector, SquadDefinition& output) {
     Impl* const impl = impl_from_state(state);
@@ -274,6 +394,14 @@ resolve_message_name(lua_State* state, std::string_view name, ActivityMessageDef
         lua_pushcfunction(state, &context_poll_command);
     } else if (key == "region_arrival_pending") {
         lua_pushcfunction(state, &context_region_arrival_pending);
+    } else if (key == "player_position_present") {
+        lua_pushcfunction(state, &context_player_position_present);
+    } else if (key == "bootflow_step") {
+        lua_pushcfunction(state, &context_bootflow_step);
+    } else if (key == "find_trigger_by_bubble") {
+        lua_pushcfunction(state, &context_find_trigger_by_bubble);
+    } else if (key == "watch_trigger_identity") {
+        lua_pushcfunction(state, &context_watch_trigger_identity);
     } else if (!push_key_context_member(state, key)) {
         lua_pushnil(state);
     }

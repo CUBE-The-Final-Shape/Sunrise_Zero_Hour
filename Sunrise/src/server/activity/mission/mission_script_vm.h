@@ -347,13 +347,55 @@ using RegionArrivalPending = bool (*)(const void* context) noexcept;
  * Arms client-side geometric detection for one exact type-31 trigger slot: the owning object's
  * registryKey, and the source slot's own type (always 31) and index. `on_event_player_trigger`
  * fires the same way it would for a client-reported crossing.
+ * A crossing event only carries the resolved type-60 volume identity, not the type-31 source, so
+ * a script watching more than one trigger needs that resolved identity to tell them apart; this
+ * hands it back here rather than making every caller hardcode a value observed from one test run.
  * @return False when the slot's authored volume geometry could not be resolved or exceeds the
- * watcher's bounded capacity.
+ * watcher's bounded capacity; the three outputs are then left unchanged.
  */
 using RegisterTriggerWatch = bool (*)(const void* context,
                                       std::uint32_t registryKey,
                                       std::uint32_t slotType,
-                                      std::uint32_t slotIndex) noexcept;
+                                      std::uint32_t slotIndex,
+                                      std::uint32_t& outVolumeRegistryKey,
+                                      std::uint32_t& outVolumeSlotType,
+                                      std::uint32_t& outVolumeSlotIndex) noexcept;
+/**
+ * True once the client-side physics hook has a live local-player body to read a position from.
+ * Exploratory: unlike regionArrivalPending, this is not reset on activity/region attach, so it
+ * can already be true from a previous activity; it is exposed for a script to observe its own
+ * transitions rather than as a proven "just spawned here" signal.
+ */
+using PlayerPositionPresent = bool (*)(const void* context) noexcept;
+/**
+ * Exploratory: the client's raw boot-flow step (see `bootflow::raw_step`), read directly from the
+ * retail engine's own loading/spawn state machine. Only one value is named so far
+ * (`activity:in_world`); this is for observing the real sequence a mission attach goes through,
+ * not a stable API.
+ */
+using BootflowStep = std::int32_t (*)(const void* context) noexcept;
+/**
+ * Diagnostic tool: resolves the type-31 source slot of the Nth (one-based) trigger row the debug
+ * "Scriptable Browser" trigger-volume panel would list for one bubble index (its own bubble
+ * filter dropdown value, not a slice-set/region index), assuming no text or scope filter is
+ * active there. Meant for identifying an unnamed trigger found by eye in that panel well enough
+ * to arm it with `RegisterTriggerWatch`/`watch_trigger_identity`, not as a stable API.
+ * @return False when the catalog is not ready, the row does not exist, or its incoming type-31
+ * reference count is not exactly one; outMatchCount and outTotalRows are still written in every
+ * case where the catalog was ready (outTotalRows is the count of bubble-matching rows found, so
+ * a false return with outTotalRows < oneBasedVisibleIndex means the row itself does not exist).
+ */
+using FindTriggerByBubbleVisibleIndex = bool (*)(const void* context,
+                                                 std::int32_t bubbleIndex,
+                                                 std::uint32_t oneBasedVisibleIndex,
+                                                 std::uint32_t& outRegistryKey,
+                                                 std::uint32_t& outSlotType,
+                                                 std::uint32_t& outSlotIndex,
+                                                 std::uint32_t& outMatchCount,
+                                                 std::uint32_t& outTotalRows,
+                                                 std::uint32_t& outTableRegistryKey,
+                                                 std::uint32_t& outTableSlotType,
+                                                 std::uint32_t& outTableSlotIndex) noexcept;
 
 /** Native SDK/live projection used by the sandbox; no borrowed pointer is script-visible. */
 struct DefinitionApi final {
@@ -392,6 +434,9 @@ struct DefinitionApi final {
     WorldDefinitionApi world{};
     RegionArrivalPending regionArrivalPending{};
     RegisterTriggerWatch registerTriggerWatch{};
+    PlayerPositionPresent playerPositionPresent{};
+    BootflowStep bootflowStep{};
+    FindTriggerByBubbleVisibleIndex findTriggerByBubbleVisibleIndex{};
 };
 
 using Intent = state::activity::mission::TypedIntent;

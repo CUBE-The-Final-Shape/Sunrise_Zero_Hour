@@ -12,6 +12,8 @@
 
 #include "../../../client/activity/player_trigger_watch.h"
 #include "../../../client/content/activity/scriptable_catalog_worker.h"
+#include "../../../client/hooks/bootflow/bootflow_hook_lifecycle.h"
+#include "../../../client/player/player_position.h"
 #include "../../../core/logging/log.h"
 #include "../../../state/build_data/runtime.h"
 #include "../../../state/build_data/scriptables/scriptable_catalog.h"
@@ -873,7 +875,10 @@ template <typename Select>
 [[nodiscard]] bool register_trigger_watch(const void* context,
                                           std::uint32_t registryKey,
                                           std::uint32_t slotType,
-                                          std::uint32_t slotIndex) noexcept {
+                                          std::uint32_t slotIndex,
+                                          std::uint32_t& outVolumeRegistryKey,
+                                          std::uint32_t& outVolumeSlotType,
+                                          std::uint32_t& outVolumeSlotIndex) noexcept {
     const sdk::BoundView* const view = context_view(context);
     if (!valid_view(view)) {
         core::log::writef(core::log::Channel::server,
@@ -989,7 +994,101 @@ template <typename Select>
     identity.registryKey = registryKey;
     identity.slotType = static_cast<std::uint8_t>(slotType);
     identity.slotIndex = static_cast<std::uint16_t>(slotIndex);
-    return trigger_watch::register_watch(identity, geometry);
+    if (!trigger_watch::register_watch(identity, geometry)) {
+        return false;
+    }
+    outVolumeRegistryKey = source.volumeRegistryKey;
+    outVolumeSlotType = source.volumeSlotType;
+    outVolumeSlotIndex = source.volumeSlotIndex;
+    return true;
+}
+
+/**
+ * Diagnostic tool: resolves the type-31 source of the Nth trigger row the debug "Scriptable
+ * Browser" trigger-volume panel would list for one bubble index. Mirrors
+ * activity_host_trigger_volumes.cpp's own row enumeration (bubble filter only; assumes no
+ * text/scope filter is active there): each owner contributes one row per instance, or one row if
+ * it has none.
+ */
+[[nodiscard]] bool find_trigger_by_bubble_visible_index(const void* context,
+                                                        std::int32_t bubbleIndex,
+                                                        std::uint32_t oneBasedVisibleIndex,
+                                                        std::uint32_t& outRegistryKey,
+                                                        std::uint32_t& outSlotType,
+                                                        std::uint32_t& outSlotIndex,
+                                                        std::uint32_t& outMatchCount,
+                                                        std::uint32_t& outTotalRows,
+                                                        std::uint32_t& outTableRegistryKey,
+                                                        std::uint32_t& outTableSlotType,
+                                                        std::uint32_t& outTableSlotIndex) noexcept {
+    outMatchCount = 0;
+    outTotalRows = 0;
+    outTableRegistryKey = 0;
+    outTableSlotType = 0;
+    outTableSlotIndex = 0;
+    const sdk::BoundView* const view = context_view(context);
+    if (!valid_view(view) || oneBasedVisibleIndex == 0) {
+        return false;
+    }
+    const auto& destination = view->binding.destination;
+    const std::string_view scenarioName(
+        reinterpret_cast<const char*>(destination.packageName.data()), destination.packageNameLength);
+    state::build_data::scenarios::Definition layout{};
+    if (scenarioName.empty() || !state::build_data::find_scenario_layout(scenarioName, layout)) {
+        return false;
+    }
+    static_cast<void>(scriptable_extraction::request(layout.tag, scenarioName, false));
+    const scriptables::SnapshotView snapshot = scriptables::snapshot();
+    if (snapshot == nullptr || snapshot->scenarioTag != layout.tag
+        || snapshot->status != scriptables::BuildStatus::ready) {
+        return false;
+    }
+
+    std::uint32_t seen = 0;
+    bool found = false;
+    for (const scriptables::TriggerVolumeOwner& owner : snapshot->triggerVolumeOwners) {
+        if (owner.tableRow >= snapshot->triggerVolumeTables.size()
+            || owner.objectRow >= snapshot->objects.size()) {
+            continue;
+        }
+        const scriptables::TriggerVolumeTable& table = snapshot->triggerVolumeTables[owner.tableRow];
+        const scriptables::Object& object = snapshot->objects[owner.objectRow];
+        if (object.bubbleRow >= snapshot->bubbles.size()
+            || snapshot->bubbles[object.bubbleRow].index
+                   != static_cast<std::uint32_t>(bubbleIndex)) {
+            continue;
+        }
+        const std::uint32_t browserCount = table.instanceCount == 0 ? 1 : table.instanceCount;
+        for (std::uint32_t offset = 0; offset < browserCount; ++offset) {
+            ++seen;
+            if (found || seen != oneBasedVisibleIndex) {
+                continue;
+            }
+            found = true;
+            outMatchCount = owner.incomingReferenceCount;
+            outTableRegistryKey = table.registryKey;
+            outTableSlotType = table.slotType;
+            outTableSlotIndex = table.slotIndex;
+            if (owner.incomingReferenceCount != 1
+                || owner.firstIncomingReference
+                       >= snapshot->triggerVolumeIncomingReferences.size()) {
+                continue;
+            }
+            const scriptables::TriggerVolumeIncomingReference& incoming =
+                snapshot->triggerVolumeIncomingReferences[owner.firstIncomingReference];
+            if (incoming.sourceObjectRow >= snapshot->objects.size()
+                || incoming.sourceSlotRow >= snapshot->slots.size()) {
+                continue;
+            }
+            const scriptables::Object& sourceObject = snapshot->objects[incoming.sourceObjectRow];
+            const scriptables::Slot& sourceSlot = snapshot->slots[incoming.sourceSlotRow];
+            outRegistryKey = sourceObject.registryKey;
+            outSlotType = sourceSlot.slotType;
+            outSlotIndex = sourceSlot.slotIndex;
+        }
+    }
+    outTotalRows = seen;
+    return found && outMatchCount == 1;
 }
 
 [[nodiscard]] char hex_digit(std::uint8_t value) noexcept {
@@ -1098,6 +1197,21 @@ bool program_identity(const sdk::BoundView& view,
     return snapshot.regionArrivalPending;
 }
 
+/**
+ * Exploratory alternative spawn signal: true once the client's physics hook has a live local
+ * player body to read a position from. Not reset on activity attach, so it can already read true
+ * from a previous activity; a script should watch for its own true-to-false-to-true transition
+ * rather than trust a single reading.
+ */
+[[nodiscard]] bool player_position_present(const void* /*context*/) noexcept {
+    return client::player::position::snapshot().present;
+}
+
+/** Exploratory: the client's raw boot-flow step, for observing the real spawn sequence. */
+[[nodiscard]] std::int32_t bootflow_step(const void* /*context*/) noexcept {
+    return client::hooks::bootflow::raw_step();
+}
+
 /** The caller must keep the immutable view alive while Lua uses the returned callbacks. */
 lua_vm::DefinitionApi definition_api(const sdk::BoundView& view) noexcept {
     lua_vm::DefinitionApi output{
@@ -1126,6 +1240,9 @@ lua_vm::DefinitionApi definition_api(const sdk::BoundView& view) noexcept {
         .directiveElementCount = &directive_element_count,
         .regionArrivalPending = &region_arrival_pending,
         .registerTriggerWatch = &register_trigger_watch,
+        .playerPositionPresent = &player_position_present,
+        .bootflowStep = &bootflow_step,
+        .findTriggerByBubbleVisibleIndex = &find_trigger_by_bubble_visible_index,
     };
     message_catalog::attach(output);
     output.catalog = catalog_definition_api(view);

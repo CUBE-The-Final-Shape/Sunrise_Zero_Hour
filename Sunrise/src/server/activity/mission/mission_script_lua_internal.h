@@ -125,6 +125,11 @@ void register_slot_metatables(lua_State* state);
 [[nodiscard]] int context_bootflow_step(lua_State* state);
 [[nodiscard]] int context_find_trigger_by_bubble(lua_State* state);
 [[nodiscard]] int context_watch_trigger_identity(lua_State* state);
+[[nodiscard]] int context_unwatch_trigger_identity(lua_State* state);
+[[nodiscard]] int context_resolve_hash(lua_State* state);
+[[nodiscard]] int context_dump_hash(lua_State* state);
+[[nodiscard]] int context_find_event_gate_keys(lua_State* state);
+[[nodiscard]] int context_squad_state_names(lua_State* state);
 
 // Diagnostic probe (development tooling only), defined in mission_script_lua_probe_api.cpp.
 

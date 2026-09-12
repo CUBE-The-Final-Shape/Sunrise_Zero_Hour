@@ -21,6 +21,12 @@ namespace sunrise::server::activity::mission::lua_vm::detail {
         lua_pushinteger(state, definition.localRow);
     } else if (key == "id") {
         lua_pushlstring(state, definition.id.data(), definition.idLength);
+    } else if (key == "resource_tag") {
+        lua_pushinteger(state, static_cast<lua_Integer>(definition.resourceTag));
+    } else if (key == "config_tag") {
+        lua_pushinteger(state, static_cast<lua_Integer>(definition.configTag));
+    } else if (key == "descriptor_offset") {
+        lua_pushinteger(state, static_cast<lua_Integer>(definition.descriptorOffset));
     } else if (key == "activate") {
         lua_pushcfunction(state, &scene_activate);
     } else {

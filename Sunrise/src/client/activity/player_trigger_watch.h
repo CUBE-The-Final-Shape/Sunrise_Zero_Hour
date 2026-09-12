@@ -57,6 +57,14 @@ struct Identity final {
  */
 [[nodiscard]] bool register_watch(const Identity& identity, const Geometry& geometry) noexcept;
 
+/**
+ * Drops the one watch registered under `identity` (binding + registryKey/slotType/slotIndex), so a
+ * one-shot trigger stops costing a table entry once it has fired. The table holds 64 entries and
+ * is otherwise only cleared with the mission instance, so long-lived scripts should release.
+ * @return False when no such watch exists.
+ */
+bool unregister_watch(const Identity& identity) noexcept;
+
 /** Drops every watch belonging to one session, e.g. before a fresh mission attach. */
 void clear_watches(const state::activity::SessionBinding& binding) noexcept;
 

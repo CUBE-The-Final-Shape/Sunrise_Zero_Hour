@@ -67,6 +67,11 @@ struct SquadDefinition final {
     std::uint32_t nativeRow{};
     std::uint32_t localRow{};
     std::size_t memberCount{};
+    /** The squad's own ClientRef identity (its owning object's registryKey plus its slot's own
+     *  type/index) -- e.g. to name it as an authored-scene dependency reference. */
+    std::uint32_t registryKey{};
+    std::uint32_t slotType{};
+    std::uint16_t slotIndex{};
 };
 
 /** One activity-local authored-scene row resolved against the pinned SDK view. */
@@ -76,6 +81,12 @@ struct SceneDefinition final {
     std::uint32_t slotRow{};
     std::uint32_t localRow{};
     std::size_t idLength{};
+    /** The scene's single exact type-43 resource tag, or 0 when it has none/more than one. */
+    std::uint32_t resourceTag{};
+    /** The placed-object config the scene's descriptor was read out of. */
+    std::uint32_t configTag{};
+    /** Byte offset of the scene's descriptor inside that config. */
+    std::uint32_t descriptorOffset{};
 };
 
 /** One scenario-local reusable object slot resolved against the pinned SDK view. */
@@ -360,6 +371,11 @@ using RegisterTriggerWatch = bool (*)(const void* context,
                                       std::uint32_t& outVolumeRegistryKey,
                                       std::uint32_t& outVolumeSlotType,
                                       std::uint32_t& outVolumeSlotIndex) noexcept;
+/** Releases the watch `RegisterTriggerWatch` armed under the same identity. @return False if none. */
+using UnregisterTriggerWatch = bool (*)(const void* context,
+                                        std::uint32_t registryKey,
+                                        std::uint32_t slotType,
+                                        std::uint32_t slotIndex) noexcept;
 /**
  * True once the client-side physics hook has a live local-player body to read a position from.
  * Exploratory: unlike regionArrivalPending, this is not reset on activity/region attach, so it
@@ -396,6 +412,60 @@ using FindTriggerByBubbleVisibleIndex = bool (*)(const void* context,
                                                  std::uint32_t& outTableRegistryKey,
                                                  std::uint32_t& outTableSlotType,
                                                  std::uint32_t& outTableSlotIndex) noexcept;
+
+/**
+ * Diagnostic tool: reads up to `outLength` bytes of the game's own content-hash resolver's
+ * definition blob for `hash` into `outBytes` (capacity `outCapacity`). Exploratory, for finding
+ * an authored scene's own embedded reference hashes (e.g. its authored event-gate node keys) by
+ * inspecting its resource definition directly -- not a stable API.
+ * @return False when the resolver is not installed, the hash does not resolve, or the read
+ * faulted; `outLength` is 0 in every false case.
+ */
+using ResolveContentHash = bool (*)(const void* context,
+                                    std::uint32_t hash,
+                                    std::uint8_t* outBytes,
+                                    std::uint32_t outCapacity,
+                                    std::uint32_t& outLength) noexcept;
+
+/**
+ * Writes the definition blob for `hash`, and for every content tag it carries down to `depth`
+ * levels, to disk beside the running game, logging each blob's size and how many authored
+ * event-gate nodes it names. Development diagnostic for locating an authored scene's graph --
+ * not a stable API.
+ * @return The number of blobs written.
+ */
+using DumpContentHash = std::uint32_t (*)(const void* context,
+                                          std::uint32_t hash,
+                                          std::uint32_t depth) noexcept;
+
+/**
+ * Scans an authored scene's graph blob (`hash`) for `kEventGateNodeClass` markers and reads the
+ * FNV-1 event key sitting 12 bytes after each one -- that offset, not the graph header's declared
+ * array offset/count (which is empty even when nodes are declared), is where the keys live.
+ * @return The number of keys found, which may exceed `outCapacity`; only the first `outCapacity`
+ * are written to `outKeys`.
+ */
+using FindEventGateKeys = std::uint32_t (*)(const void* context,
+                                            std::uint32_t hash,
+                                            std::uint32_t* outKeys,
+                                            std::uint32_t outCapacity) noexcept;
+
+/** One actor state an actor class declares: the (group, name) pair a type-2 action program names. */
+struct ActorStateNameDefinition final {
+    std::uint32_t groupHash{};
+    std::uint32_t nameHash{};
+    std::uint32_t ordinal{};
+};
+
+/**
+ * Lists the distinct actor state names every member of one scenario-local squad row declares,
+ * so a script can try them as `play_actor_action{group=, action=}` candidates on the squad's
+ * type-2 cell. @return The number found, which may exceed `outCapacity`.
+ */
+using SquadStateNames = std::uint32_t (*)(const void* context,
+                                          std::uint32_t localRow,
+                                          ActorStateNameDefinition* outNames,
+                                          std::uint32_t outCapacity) noexcept;
 
 /** Native SDK/live projection used by the sandbox; no borrowed pointer is script-visible. */
 struct DefinitionApi final {
@@ -434,9 +504,14 @@ struct DefinitionApi final {
     WorldDefinitionApi world{};
     RegionArrivalPending regionArrivalPending{};
     RegisterTriggerWatch registerTriggerWatch{};
+    UnregisterTriggerWatch unregisterTriggerWatch{};
     PlayerPositionPresent playerPositionPresent{};
     BootflowStep bootflowStep{};
     FindTriggerByBubbleVisibleIndex findTriggerByBubbleVisibleIndex{};
+    ResolveContentHash resolveContentHash{};
+    DumpContentHash dumpContentHash{};
+    FindEventGateKeys findEventGateKeys{};
+    SquadStateNames squadStateNames{};
 };
 
 using Intent = state::activity::mission::TypedIntent;

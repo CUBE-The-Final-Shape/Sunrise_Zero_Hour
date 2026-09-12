@@ -780,26 +780,45 @@ constexpr std::int8_t kFilterModeInside = 1;
     constexpr lua_Integer kMaximumHash = (std::numeric_limits<std::uint32_t>::max)();
     const auto* const handle =
         static_cast<const SlotHandle*>(luaL_checkudata(state, 1, kSlotMetatable));
-    static constexpr std::array<std::string_view, 4> kDeclared{
-        "generation", "revision", "group", "action"};
+    // `target` (a slot handle), `target_mode` (0..7) and `target_marker` (0..255) fill the
+    // program's otherwise-absent spatial target; all three are optional and unverified live.
+    static constexpr std::array<std::string_view, 7> kDeclared{
+        "generation", "revision", "group", "action", "target", "target_mode", "target_marker"};
     refuse_unknown_arguments(state, kDeclared);
     const lua_Integer generation = checked_integer_argument(state, "generation");
     const lua_Integer revision = checked_integer_argument(state, "revision");
     const lua_Integer group = checked_integer_argument(state, "group");
     const lua_Integer action = checked_integer_argument(state, "action");
+    const lua_Integer targetMode = optional_integer_argument(state, "target_mode", 0);
+    const lua_Integer targetMarker =
+        optional_integer_argument(state, "target_marker", combatant::kActionNoTargetMarker);
     SlotDefinition actor{};
     if (!current_slot(state, *handle, actor) || !exact_combatant_slot(actor)
         || !valid_counter(generation) || !valid_counter(revision) || group < 0
-        || group > kMaximumHash || action <= 0 || action > kMaximumHash) {
+        || group > kMaximumHash || action <= 0 || action > kMaximumHash || targetMode < 0
+        || targetMode > 7 || targetMarker < 0 || targetMarker > 255) {
         return luaL_error(state,
                           "actor action requires an exact member and valid native identities");
     }
+    combatant::ActionRequest request{static_cast<std::uint32_t>(generation),
+                                     static_cast<std::uint32_t>(revision),
+                                     static_cast<std::uint32_t>(group),
+                                     static_cast<std::uint32_t>(action)};
+    request.targetMode = static_cast<std::uint32_t>(targetMode);
+    request.targetMarker = static_cast<std::uint32_t>(targetMarker);
+    SlotHandle targetHandle{};
+    if (optional_argument(state, "target", kSlotMetatable, targetHandle)) {
+        SlotDefinition target{};
+        if (!current_slot(state, targetHandle, target) || target.registryKey == 0
+            || target.slotIndex > std::numeric_limits<std::uint16_t>::max()) {
+            return luaL_error(state, "actor action target is not a live slot");
+        }
+        request.targetRegistryKey = target.registryKey;
+        request.targetSlotType = target.slotType;
+        request.targetSlotIndex = static_cast<std::uint16_t>(target.slotIndex);
+    }
     std::array<std::byte, combatant::kActionBytes> body{};
-    if (!combatant::encode_action({static_cast<std::uint32_t>(generation),
-                                   static_cast<std::uint32_t>(revision),
-                                   static_cast<std::uint32_t>(group),
-                                   static_cast<std::uint32_t>(action)},
-                                  body)) {
+    if (!combatant::encode_action(request, body)) {
         return luaL_error(state, "actor action encoder failed");
     }
     return queue_slot_auth(state, actor, combatant::kSchema, combatant::kActionBits, body);
@@ -1086,6 +1105,24 @@ constexpr std::int8_t kFilterModeInside = 1;
  * and slot_index -- the same triple `on_event_player_trigger` reports as `volume_*`, so a script
  * watching more than one trigger can tell them apart without hardcoding a value read off one test.
  */
+/** `slot:unwatch_trigger()` releases the watch `slot:watch_trigger()` armed. @return released. */
+[[nodiscard]] int slot_unwatch_trigger(lua_State* state) {
+    const auto* const handle =
+        static_cast<const SlotHandle*>(luaL_checkudata(state, 1, kSlotMetatable));
+    SlotDefinition definition{};
+    if (!current_slot(state, *handle, definition)) {
+        return luaL_error(state, "activity slot is stale or invalid");
+    }
+    Impl* const impl = impl_from_state(state);
+    const bool released = impl != nullptr && impl->definitions.unregisterTriggerWatch != nullptr
+                          && impl->definitions.unregisterTriggerWatch(impl->definitions.context,
+                                                                     definition.registryKey,
+                                                                     definition.slotType,
+                                                                     definition.slotIndex);
+    lua_pushboolean(state, released ? 1 : 0);
+    return 1;
+}
+
 [[nodiscard]] int slot_watch_trigger(lua_State* state) {
     const auto* const handle =
         static_cast<const SlotHandle*>(luaL_checkudata(state, 1, kSlotMetatable));
@@ -1120,7 +1157,12 @@ constexpr std::int8_t kFilterModeInside = 1;
     return 4;
 }
 
-/** Publishes one scene generation and its cumulative authored event keys. */
+/**
+ * Publishes one scene generation and its cumulative authored event keys. The wire format has no
+ * dependency-reference concept -- an earlier version of this call sent one, which is invalid and
+ * has been removed. Callers must keep `generation` constant across calls that accumulate events
+ * into the same scene: bumping it restarts the graph and discards every previously committed key.
+ */
 [[nodiscard]] int slot_set_scene_events(lua_State* state) {
     namespace scene = middleware::bap::activity_message::scene_events;
     const auto* const handle =
@@ -1154,6 +1196,7 @@ constexpr std::int8_t kFilterModeInside = 1;
         events[index] = static_cast<std::uint32_t>(event);
     }
     lua_pop(state, 1);
+
     std::array<std::byte, scene::kMaximumBytes> body{};
     std::size_t bytes = 0;
     std::size_t bits = 0;
@@ -1420,6 +1463,8 @@ constexpr std::int8_t kFilterModeInside = 1;
         lua_pushcfunction(state, &slot_fire_trigger);
     } else if (key == "watch_trigger") {
         lua_pushcfunction(state, &slot_watch_trigger);
+    } else if (key == "unwatch_trigger") {
+        lua_pushcfunction(state, &slot_unwatch_trigger);
     } else if (key == "play_sequence") {
         lua_pushcfunction(state, &slot_play_sequence);
     } else if (key == "set_scene_events") {

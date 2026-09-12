@@ -36,6 +36,12 @@ namespace sunrise::server::activity::mission::lua_vm::detail {
             lua_pushinteger(state, definition.defaultCounts[index]);
             lua_rawseti(state, -2, static_cast<lua_Integer>(index + 1));
         }
+    } else if (key == "registry_key") {
+        lua_pushinteger(state, static_cast<lua_Integer>(definition.registryKey));
+    } else if (key == "slot_type") {
+        lua_pushinteger(state, static_cast<lua_Integer>(definition.slotType));
+    } else if (key == "slot_index") {
+        lua_pushinteger(state, static_cast<lua_Integer>(definition.slotIndex));
     } else if (key == "counts") {
         lua_pushcfunction(state, &squad_counts);
     } else if (world_api::push_squad_member(state, definition, key)) {

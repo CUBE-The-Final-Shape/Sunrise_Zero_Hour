@@ -1,3 +1,4 @@
+#include <array>
 #include <charconv>
 #include <cstddef>
 #include <cstdint>
@@ -182,12 +183,155 @@ namespace {
 }
 
 /**
+ * Diagnostic tool: reads up to 256 bytes of the game's own content-hash resolver's definition
+ * blob for `hash` directly out of process memory. Meant for scanning an authored scene's own
+ * resourceTag for embedded reference hashes (event-gate node keys) the extracted SDK catalog does
+ * not expose -- not a stable API.
+ * @return ok (boolean); when true, the raw bytes as a Lua string (may contain embedded zero
+ * bytes -- use string.byte, not string patterns that assume a C string).
+ */
+[[nodiscard]] int context_resolve_hash(lua_State* state) {
+    static_cast<void>(luaL_checkudata(state, 1, kContextMetatable));
+    const lua_Integer hash = luaL_checkinteger(state, 2);
+    if (hash < 0 || hash > (std::numeric_limits<std::uint32_t>::max)()) {
+        return luaL_error(state, "hash must fit in an unsigned 32-bit integer");
+    }
+    Impl* const impl = impl_from_state(state);
+    static constexpr std::uint32_t kCapacity = 256;
+    std::array<std::uint8_t, kCapacity> bytes{};
+    std::uint32_t length = 0;
+    const bool ok = impl != nullptr && impl->definitions.resolveContentHash != nullptr
+                   && impl->definitions.resolveContentHash(impl->definitions.context,
+                                                            static_cast<std::uint32_t>(hash),
+                                                            bytes.data(),
+                                                            kCapacity,
+                                                            length);
+    lua_pushboolean(state, ok ? 1 : 0);
+    if (!ok) {
+        lua_pushnil(state);
+        return 2;
+    }
+    lua_pushlstring(state, reinterpret_cast<const char*>(bytes.data()), length);
+    return 2;
+}
+
+/**
+ * Development diagnostic: `context:dump_hash{hash = ..., depth = ...}` writes the definition blob
+ * for `hash`, and every content tag it carries down to `depth` levels, beside the running game,
+ * logging each blob's size and how many authored event-gate nodes it names. Locating an authored
+ * scene's graph needs the whole blob, which is far larger than `resolve_hash` returns.
+ * @return The number of blobs written.
+ */
+[[nodiscard]] int context_dump_hash(lua_State* state) {
+    static_cast<void>(luaL_checkudata(state, 1, kContextMetatable));
+    static constexpr std::array<std::string_view, 2> kDeclared{"hash", "depth"};
+    refuse_unknown_arguments(state, kDeclared);
+    const lua_Integer hash = checked_integer_argument(state, "hash");
+    const lua_Integer depth = optional_integer_argument(state, "depth", 1);
+    if (hash <= 0 || hash > (std::numeric_limits<std::uint32_t>::max)() || depth < 0 || depth > 4) {
+        return luaL_error(state, "dump_hash needs an unsigned 32-bit hash and a depth of 0..4");
+    }
+    Impl* const impl = impl_from_state(state);
+    const std::uint32_t written =
+        (impl == nullptr || impl->definitions.dumpContentHash == nullptr)
+            ? 0U
+            : impl->definitions.dumpContentHash(impl->definitions.context,
+                                                static_cast<std::uint32_t>(hash),
+                                                static_cast<std::uint32_t>(depth));
+    lua_pushinteger(state, static_cast<lua_Integer>(written));
+    return 1;
+}
+
+/**
+ * Development diagnostic: `context:find_event_gate_keys{hash = ...}` scans an authored scene's
+ * graph blob for every `kEventGateNodeClass` marker and returns the FNV-1 event key sitting 12
+ * bytes after each one (the graph header's own declared array offset/count for that class is
+ * empty even when it declares N such nodes -- the keys live inline in the graph body instead).
+ * @return An array (1-based) of the keys found, in the order their nodes appear in the graph.
+ */
+[[nodiscard]] int context_find_event_gate_keys(lua_State* state) {
+    static_cast<void>(luaL_checkudata(state, 1, kContextMetatable));
+    static constexpr std::array<std::string_view, 1> kDeclared{"hash"};
+    refuse_unknown_arguments(state, kDeclared);
+    const lua_Integer hash = checked_integer_argument(state, "hash");
+    if (hash <= 0 || hash > (std::numeric_limits<std::uint32_t>::max)()) {
+        return luaL_error(state, "find_event_gate_keys needs an unsigned 32-bit hash");
+    }
+    Impl* const impl = impl_from_state(state);
+    static constexpr std::uint32_t kCapacity = 32;
+    std::array<std::uint32_t, kCapacity> keys{};
+    const std::uint32_t found =
+        (impl == nullptr || impl->definitions.findEventGateKeys == nullptr)
+            ? 0U
+            : impl->definitions.findEventGateKeys(
+                impl->definitions.context, static_cast<std::uint32_t>(hash), keys.data(), kCapacity);
+    lua_newtable(state);
+    for (std::uint32_t index = 0; index < found && index < kCapacity; ++index) {
+        lua_pushinteger(state, static_cast<lua_Integer>(keys[index]));
+        lua_rawseti(state, -2, static_cast<lua_Integer>(index + 1));
+    }
+    return 1;
+}
+
+/**
+ * `context:squad_state_names{squad = <row>}` lists the distinct actor states the squad's member
+ * classes declare, as `{group =, name =, ordinal =}` rows -- candidates for
+ * `slot:play_actor_action{group =, action =}` on that squad's type-2 cell.
+ */
+[[nodiscard]] int context_squad_state_names(lua_State* state) {
+    static_cast<void>(luaL_checkudata(state, 1, kContextMetatable));
+    static constexpr std::array<std::string_view, 1> kDeclared{"squad"};
+    refuse_unknown_arguments(state, kDeclared);
+    const lua_Integer row = checked_integer_argument(state, "squad");
+    if (row <= 0 || row > (std::numeric_limits<std::uint32_t>::max)()) {
+        return luaL_error(state, "squad_state_names needs a positive squad row");
+    }
+    Impl* const impl = impl_from_state(state);
+    static constexpr std::uint32_t kCapacity = 256;
+    std::array<ActorStateNameDefinition, kCapacity> names{};
+    const std::uint32_t found =
+        (impl == nullptr || impl->definitions.squadStateNames == nullptr)
+            ? 0U
+            : impl->definitions.squadStateNames(
+                impl->definitions.context, static_cast<std::uint32_t>(row), names.data(), kCapacity);
+    lua_newtable(state);
+    for (std::uint32_t index = 0; index < found && index < kCapacity; ++index) {
+        lua_createtable(state, 0, 3);
+        lua_pushinteger(state, static_cast<lua_Integer>(names[index].groupHash));
+        lua_setfield(state, -2, "group");
+        lua_pushinteger(state, static_cast<lua_Integer>(names[index].nameHash));
+        lua_setfield(state, -2, "name");
+        lua_pushinteger(state, static_cast<lua_Integer>(names[index].ordinal));
+        lua_setfield(state, -2, "ordinal");
+        lua_rawseti(state, -2, static_cast<lua_Integer>(index + 1));
+    }
+    return 1;
+}
+
+/**
  * Arms client-side geometric detection for one type-31 slot named by its raw wire identity
  * (registry_key, slot_type, slot_index) rather than a resolved Lua slot handle -- for a trigger
  * `context:slot(...)` cannot name, such as an unnamed one found via `find_trigger_by_bubble`.
  * @return armed (boolean), and when armed the resolved type-60 volume's registry_key, slot_type
  * and slot_index, exactly like `slot:watch_trigger()`.
  */
+/** `context:unwatch_trigger_identity(registry_key, slot_type, slot_index)` -> released (boolean). */
+[[nodiscard]] int context_unwatch_trigger_identity(lua_State* state) {
+    static_cast<void>(luaL_checkudata(state, 1, kContextMetatable));
+    const lua_Integer registryKey = luaL_checkinteger(state, 2);
+    const lua_Integer slotType = luaL_checkinteger(state, 3);
+    const lua_Integer slotIndex = luaL_checkinteger(state, 4);
+    Impl* const impl = impl_from_state(state);
+    const bool released = impl != nullptr && impl->definitions.unregisterTriggerWatch != nullptr
+                          && impl->definitions.unregisterTriggerWatch(
+                              impl->definitions.context,
+                              static_cast<std::uint32_t>(registryKey),
+                              static_cast<std::uint32_t>(slotType),
+                              static_cast<std::uint32_t>(slotIndex));
+    lua_pushboolean(state, released ? 1 : 0);
+    return 1;
+}
+
 [[nodiscard]] int context_watch_trigger_identity(lua_State* state) {
     static_cast<void>(luaL_checkudata(state, 1, kContextMetatable));
     const lua_Integer registryKey = luaL_checkinteger(state, 2);
@@ -402,6 +546,16 @@ resolve_message_name(lua_State* state, std::string_view name, ActivityMessageDef
         lua_pushcfunction(state, &context_find_trigger_by_bubble);
     } else if (key == "watch_trigger_identity") {
         lua_pushcfunction(state, &context_watch_trigger_identity);
+    } else if (key == "unwatch_trigger_identity") {
+        lua_pushcfunction(state, &context_unwatch_trigger_identity);
+    } else if (key == "resolve_hash") {
+        lua_pushcfunction(state, &context_resolve_hash);
+    } else if (key == "dump_hash") {
+        lua_pushcfunction(state, &context_dump_hash);
+    } else if (key == "find_event_gate_keys") {
+        lua_pushcfunction(state, &context_find_event_gate_keys);
+    } else if (key == "squad_state_names") {
+        lua_pushcfunction(state, &context_squad_state_names);
     } else if (!push_key_context_member(state, key)) {
         lua_pushnil(state);
     }

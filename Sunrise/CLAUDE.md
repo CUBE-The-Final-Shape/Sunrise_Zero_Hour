@@ -1,4 +1,4 @@
-# Sunrise — Session Recap: Reconstructing "Homecoming" (Red War, mission_towerfall)
+# Sunrise — Session Recap: Authored Scenes Play (type-43) — Wall, Centurion and Cayde beats restored
 
 Community reimplementation of Destiny 2 (Shadowkeep-era) client/server. Goal of this
 work-in-progress effort: hand-author the Red War campaign's first mission ("Homecoming",
@@ -6,337 +6,166 @@ internal codename `mission_towerfall`, Activity #266 / hash 0x62D85FB3) as a rea
 Lua mission, using only data legitimately extracted from the user's own local install — no
 copyrighted content is stored in this repo.
 
-**This file supersedes the previous session recap.** The previous session solved the spawn
-location and got the intro directive/dialogue working from a fixed timer. This session built a
-whole native trigger-detection system from scratch (the big lasting deliverable), then used it to
-extend the mission, and separately found and used a much better native spawn signal
-(`bootflow_step`).
+**This file supersedes the previous recaps and most of
+[SCENE-EVENTS-UPSTREAM-FINDINGS.md](SCENE-EVENTS-UPSTREAM-FINDINGS.md).** That file's wire
+protocol section (byte-exact `scene_events::encode()`, zero dependencies, constant generation) and
+its "keys are inline at marker+12" finding still hold; its plan and its "which record is the
+graph" question are answered below. Everything in this session was established by 13 live runs
+on 2026-09-12, each observed by the user in-game and correlated with `script_probe` log lines.
 
-## Build & deploy (always Release — Debug triggers the anti-tamper freeze)
+## Where Homecoming stands (both authored scenes now play)
 
-```bash
-# Compile (MSBuild, Release, x64) then deploy — game must be closed to overwrite the DLL:
-"C:\Program Files\Microsoft Visual Studio\18\Community\MSBuild\Current\Bin\MSBuild.exe" \
-  "H:\Random\Sunrise\Sunrise\Sunrise.vcxproj" /p:Configuration=Release /p:Platform=x64 /m:2
-cp "H:\Random\Sunrise\build\x64\Release\steam_api64.dll" "E:\Sunrise\Game\bin\x64\steam_api64.dll"
+1. `on_start`: arms every entry in `watches`; starts the poll loop.
+2. `bootflow_step` reaches 38 → fake-fight squads, dialogue Cue 1, timer chain, "Defend your
+   home" directive; also discovers the scene event keys (`find_event_gate_keys`) and lists the
+   Centurion's actor states (`squad_state_names`) — both logged as probes.
+3. **Wall beat (`pt_sc_underwatch_intro_stand`) — confirmed "perfect" by the user:** retire the
+   fake fight → `set_scene_events{generation=1, events={}}` → 1s → `scene:activate{}` + place
+   `squad_first_contact_cabal` → 250ms → the 5 event keys + `set_channel(d_underwatch_collapsing_wall)`
+   in the same tick. The authored explosion VFX (driven by a scene key) and the wall device open
+   together, the Cabal is already behind the wall and attacks. `backup_a` and Cue 5 as before.
+4. `underwatch_start_zone` exit → Cue 6.
+5. `pt_centurion_intro` → place `sq_frame`, `sq_centurion_intro_backup`, `sq_centurion_intro_rush`
+   (reinforcements spawn with the Frame, as in the shipped beat), and **create the Centurion actor
+   with a type-2 action program in a static pose** (see below).
+6. **Centurion beat (unnamed trigger idx 281 = bubble 9 index 39) — confirmed "exactly the shipped
+   behaviour":** `set_scene_events{}` → `activate{}` → 3 keys, all synchronous on entry. The scene
+   claims the posed Centurion, teleports it behind the left wall, walks it in and plays the synced
+   impale with `sq_frame`, then the Centurion returns to combat AI.
+7. `pt_centurion_intro_reinforce` → Cue 10, and the Shaxx door is shut (`o_shaxx_door_enter`
+   `set_object_active{active=true}` — the closed door is an object that is absent by default).
+8. **Cayde golden-gun beat (`pt_shaxx_enters`, volume 320) — confirmed complete:** bind →
+   activate → the 17 keys of graph `0x80C3DEF5`, nothing else. The scene spawns Cayde and the
+   three Legionaries itself, opens the door, plays Cues 12/13 and 15/16 itself, and never reports
+   `scene_finished`; the "Find Zavala" directive (`0x432D2C95`) goes out 21.5s after the trigger.
+
+## The findings, in the order they were established
+
+### 1. The real event-gate graph is at resource-entity `+0xC0`, not `+0x88 → +0x64`
+
+The previous session's chain `resource +0x88 → schema record → +0x64 → graph` lands on a small
+record (`0x80BEB7EA` for the Cabal scene, `0x80BEB7ED` for the Centurion) that only *declares* the
+gate count in its header (5 and 3) and holds no nodes. The resource entity references a second,
+large graph at `+0xC0` (repeated at `+0x1A0/+0x240/+0x290/+0x2B8`) which holds exactly that many
+`0x8080637D` nodes, `0x60` apart, FNV-1 key at marker+12:
+
+| scene                      | gate graph   | keys |
+|----------------------------|--------------|------|
+| `scene_cabal_first_contact`| `0x80C3DEF4` | `385838EC, AE7CC69C, 50B1B667, E404F85C, 9645E0E8` |
+| `sc_centurion_intro`       | `0x80BEB7EC` | `385838EC, 6F51AC66, CFB8CB39` |
+
+`0x385838EC` opens every scene's list in the whole activity (a shared "start" gate). Some 20
+sibling graphs `0x80BEB7xx`/`0x80C3DFxx` each carry their own run — the offset-scan technique is
+general. `find_event_gate_keys()` is now bounded to the record (`uint32` at offset 0) and skips
+`0`, `0xFFFFFFFF` and the `0x8080xxxx` class band (the header declaration entry reads as key 0).
+
+### 2. Protocol confirmed live: empty deposit → activate → all keys at once
+
+`scene_finished` fires reliably ~7s after the keys (≈3.75s after the last key when they are
+staggered 3s apart). An empty event list with a valid body does nothing: the keys are required.
+Sending them staggered made the scene start visibly late; one publish of the full list is right.
+
+### 3. Scenes neither spawn nor deliver their participants
+
+With no manual placement nothing appears (run 2); squad mode `reserve` produces nothing either
+(run 6). Participants come from the descriptor (`0x9D8076E4` + packed `slotIndex<<16|slotType`):
+Cabal scene = squad 6 (`squad_first_contact_cabal`), squad 7 (`sq_frame_die`), aiPointSet 274;
+Centurion scene = squad 20 (`sq_centurion_intro`), squad 24 (`sq_frame`). Participant squads all
+share the scene's own origin as their authored anchor (SDK: `sq_centurion_intro` and `sq_frame`
+at the identical point), so ordinary placement drops them on each other.
+
+`sq_frame_die` is deliberately not placed: it only slid half-sunk through the floor and the user
+is confident it is not part of the beat as shipped.
+
+### 4. The rule: a scene claims a combatant only if it already exists and is not fighting
+
+Across runs 1–5 the Frame (no type-2 cell, client-simulated) always played its part while the
+Centurion/Cabal (combat AI) ignored the scene whether placed before or after the bind, and the
+SET_FACTION actor command (`squad:actor_command{command=45, value=-1/-2/-3}`; policy accepts only
+NONE/REMOVED/HOSTILE_TO_ALL) did not stop the engagement.
+
+`sq_centurion_intro` is the one squad of the beat with a **type-2 cell** (`sq_centurion_intro__cell_1`).
+`slot:play_actor_action{generation=1, revision=N, group=, action=}` on that cell **creates the
+actor** (exactly like Ember's Harvester) and runs the named actor state. The Centurion class
+(`0x80C1A52D`) declares 14 states, all in group `0xAFB11A12` (listed by the new
+`context:squad_state_names{squad=row}`; hashes only, no names recovered):
+
+```
+1:40FC40DA 2:8E530259 3:92B2820F 4:4294D6A1 5:56A95B3A 6:41651ADD 7:675F9DA3
+8:69F9A1BC 9:8F797125 10:211C59FE 11:F64F014C 12:C654F1BB 13:9BC29DEE 14:F7C6C8F4
 ```
 
-Note the build output lands in `H:\Random\Sunrise\build\...` — **one level above** the `Sunrise`
-project folder (the git repo root is `H:\Random\Sunrise`, and `Sunrise` is a subdirectory of it;
-easy to get wrong, cost a failed `cp` once this session). `/m:2` (limited parallelism) avoids an
-MSVC "out of heap space" (C1060) error seen with full `/m` parallelism in this environment.
+States 1–8 are static poses; **#9 `0x8F797125` is the entrance/impale animation itself** (sent
+directly it plays from the actor's current spot — walks into the left wall). The working recipe
+(run 13): create the actor with pose #1 at `pt_centurion_intro`, then start the scene at the
+trigger; the scene claims the existing, non-fighting actor, places it at its authored entrance
+and plays everything itself. This is presumably the general pattern for every scene with a
+combatant participant (`scene_cayde_golden_gun`, `sc_hero_moment_underwatch`, ...).
 
-The DLL masquerades as `steam_api64.dll`. Game install root: `E:\Sunrise\Game`. Sunrise's own
-artifact folder (settings, scripts, logs — same folder as the DLL):
-`E:\Sunrise\Game\bin\x64\Sunrise\`.
+### 5. Do NOT send a spatial target with an action program
 
-- Mission script: `...\Sunrise\scripts\mission_towerfall.lua` — edits take effect on the **next
-  attach** (relaunch the activity). A "Reload script" action exists in the debug UI but was
-  observed to be unreliable this session (a script reload did not pick up new event handlers
-  correctly) — **relaunch the activity fully** rather than trusting Reload, at least for changes
-  that add new `on_event_*` handlers.
-- Log: `...\Sunrise\logs\sunrise.log` (rotates one `.old` copy, never truncated — always tail).
-- Remote command file: `...\Sunrise\rt_cmd.txt` — see **RT_BRIDGE.md** (now a committed doc, not
-  just this file) for the full write-up of the convention.
+`combatant_auth::ActionRequest` now carries an optional target ClientRef + 3-bit mode + 8-bit
+marker (`play_actor_action{target=, target_mode=, target_marker=}`), added to try positioning
+the actor. Every present target tried (scene slot type 43; squad slot type 1; corrected encoder)
+**stalled the client's main loop within ~2s** (`hitch detected: mainloop world controller ...
+stalled`), i.e. a hard freeze. The fields stay in the API but unset; the accepted reference kind
+is unknown and not needed now that the scene positions the actor. (Runs 10–11 also had an
+encoder ordering bug — the target was written before the root fields — fixed; run 12 with the
+fixed encoder still froze.)
 
-## Documentation now committed to the repo (not just this file)
+### 6. Participant policy is per scene; watches must be released
 
-- **[TRIGGER_WATCH.md](TRIGGER_WATCH.md)** — the `slot:watch_trigger()` / player-trigger-volume
-  detection system: what problem it solves, how to use it, why the first call(s) can return
-  `false`. Written for the community, not just this session.
-- **[RT_BRIDGE.md](RT_BRIDGE.md)** — the `rt_cmd.txt` / `context:probe()` live-iteration
-  convention, with a worked example.
-- Both are at the **repo root** (`H:\Random\Sunrise\Sunrise\...`), not under `docs/` — that
-  folder is `.gitignore`d in this repo (reserved for something else, presumably local generated
-  docs), discovered the hard way when a first attempt to commit them there silently produced
-  nothing to commit.
+`scene_cayde_golden_gun` (config `0x80B5099E`, resource `0x80B8273C`, 33 participants incl.
+`o_shaxx_door_enter/exit`) spawns its own Cayde and Legionaries — placing them (or posing the
+Legionaries) only produced duplicates. So: Centurion = pre-create; Cayde = supply nothing. Check
+each new scene live before assuming either. `d_gun_door`/`gun_door` do nothing to that door;
+`o_shaxx_*blocker` are invisible collision only. `pt_shaxx_enters` does not arm by name — arm the
+type-60 identity `2642441956/60/320`, and only once its region is streamed (the retry loop covers
+it).
 
-## Git / GitHub state
+The client trigger-watch table holds **64 entries and survives a mission restart in the same
+process**; a live mass-arm of 47 volumes (done once for discovery) filled it and every later arm
+failed until the game was restarted. New API `context:unwatch_trigger_identity(reg, type, idx)` /
+`slot:unwatch_trigger()` (native `player_trigger_watch::unregister_watch`); the script releases
+every one-shot watch right after it fires. Never mass-arm live again.
 
-- Working fork: **https://github.com/Fozkais/Sunrise** (remote name `myfork`; `origin` remains
-  `https://github.com/stanuwu/Sunrise.git`, the upstream).
-- **The fork was deleted and recreated once this session.** Cause: commit messages that
-  mentioned "PR #111" made GitHub permanently record a "referenced this pull request" timeline
-  entry on the *upstream* PR #111 page, visible to anyone, which the user explicitly did not
-  want (private experimentation only). GitHub does **not** retroactively remove that timeline
-  entry even after the offending commits are rewritten/force-pushed away — the only fix found was
-  deleting the fork and re-pushing a history that never contained the "#111" text in the first
-  place. **Lesson: never write a literal `#<number>` referencing another repo's issue/PR in a
-  commit message pushed to a fork of that repo**, even in prose ("PR #111") — GitHub's
-  auto-linking does not care about phrasing, only the `#123` pattern appearing anywhere in the
-  message.
-- Current clean history on the fork (3 commits ahead of upstream `master`, at `66888a8`):
-  1. `ef0ad59` "Merge fix for initial_state mission script propagation" — the merged (and
-     locally hardened: proper mission-runtime-lock acquisition before probing) external fix that
-     lets a mission script declare `initial_state = { region_index = N }` and have the client
-     natively stream into that region at attach instead of the activity's default spawn.
-  2. `41c906e` "Add SDK dialogue/directive text catalogs and region-arrival query" — real
-     player-facing dialogue/directive text catalogs, `context:region_arrival_pending()`, the
-     scene-seed roster `continue`-on-failure fix, dev-mode sandbox relaxations.
-  3. `7e3abdb` "Add native player-trigger-volume detection (slot:watch_trigger)" — the trigger
-     system, documented in TRIGGER_WATCH.md/RT_BRIDGE.md.
-- **Currently uncommitted** on top of `7e3abdb` (this session's newest work, not yet committed —
-  ask the user before committing/pushing): `bootflow_step`/`in_world` Lua exposure,
-  `find_trigger_by_bubble` diagnostic tool, `watch_trigger_identity`, the `resolve_direct_target`
-  extension to `player_trigger::resolve()`, and enter/exit direction reporting in
-  `player_trigger_watch`. See the "New native additions this session" section below for the full
-  list of touched files.
-- A pre-existing, unrelated `git stash` entry (`WIP: probe tooling, catalog additions, seed
-  diagnostics`) has been sitting in the stash list since before this session even started; still
-  unresolved housekeeping, non-blocking, left alone again this session.
-- A local `backup-before-reword` branch exists (safety net from the history-rewrite operation,
-  not pushed anywhere) — fine to delete once confident the fork is in good shape.
+## Native additions (all uncommitted — ask before committing)
 
-## The trigger-detection system (this session's main deliverable)
+- `src/client/hooks/content_resolver/content_resolver.{h,cpp}`: `find_event_gate_keys()` bounded
+  to the record and filtered; `dump_tree` logs `window=`/`record=` and counts gates within the
+  record. Plus the previous session's `resolve()`/`dump_tree()`.
+- `mission_script_vm.h` / `mission_script_sdk_bridge.cpp` / `mission_script_lua_context_api.cpp`
+  / `mission_script_lua_internal.h`: `context:squad_state_names{squad=<row>}` → array of
+  `{group=, name=, ordinal=}` from the SDK actor-state-name table for the squad's member classes.
+- `combatant_auth.h` + `mission_script_lua_slot_api.cpp`: optional `target`/`target_mode`/
+  `target_marker` on `play_actor_action` (see finding 5 — leave unset).
+- `player_trigger_watch.{h,cpp}` `unregister_watch()`; `mission_script_vm.h` `UnregisterTriggerWatch`;
+  bridge `unregister_trigger_watch`; Lua `context:unwatch_trigger_identity()` and
+  `slot:unwatch_trigger()`.
+- Still present from earlier sessions: `context:find_event_gate_keys{hash=}`,
+  `context:dump_hash{}`, `context:resolve_hash()`, scene `config_tag`/`descriptor_offset`/
+  `resource_tag`, squad `registry_key`/`slot_type`/`slot_index`.
 
-**The problem**: the retail client never reports a local player crossing an authored type-31
-trigger volume (the schema-0x8080879F / target-6685 incident `mission_script_player_trigger.cpp`
-already knows how to resolve). Confirmed by temporarily logging every incoming incident's target:
-only ever `1121`, never `6685`, even walking directly through a known trigger box.
+Builds clean; deployed to `E:\Sunrise\Game\bin\x64\steam_api64.dll` (copy fails while the game
+runs — close it first).
 
-**The fix, fully working**: `client::activity::player_trigger_watch` (new module) combines two
-things Sunrise already had lying around unused for this purpose — the local player's live tracked
-position (`client::player::position`, built for the teleport feature) and every trigger volume's
-already-extracted exact world-space geometry (`state::build_data::scriptables`, the same data the
-debug UI's wireframe overlay draws) — to do the containment test itself, once a frame. On a
-transition it encodes and submits the *same* incident payload the retail client would have sent,
-through the *same* `host::submit_incident` ingestion path a real one takes, so nothing downstream
-has to know the difference. Full write-up: **TRIGGER_WATCH.md**.
+## Deployed script
 
-Two real bugs had to be fixed to make this actually work end to end (both fixed, both left as
-permanent code, not workarounds):
-1. The trigger-volume geometry catalog (`state::build_data::scriptables`) is **only ever built on
-   request** — normally only the debug "Scriptable Browser" panel asks for it. Nothing else in
-   the mission runtime did, so it silently stayed empty. `register_trigger_watch` (server side)
-   now requests it itself (idempotent) and returns `false` while it's still building; the Lua
-   side must retry on a short timer rather than treat one `false` as final.
-2. A synthesized incident with `sourceGeneration` left at its default `0` was **silently dropped**
-   by the mission feed's own eligibility gate (`event.sourceGeneration !=
-   instance.view.activityClientGeneration` in `mission_script_runtime_feed.cpp`). Fixed by
-   stamping the real `activityClientGeneration` (captured at watch-registration time) onto the
-   synthesized incident.
+`E:\Sunrise\Game\bin\x64\Sunrise\scripts\mission_towerfall.lua` (not in the repo) is cleaned of
+the experiment scaffolding; `mission_towerfall.lua.bak_run*` backups beside it record each run's
+state. Remaining diagnostics: `scene_fallback`/`wall_fallback` probes (no-ops now), the
+`squad_slot(...)`/`squad_state_names` probes at bootflow 38, and the cinematic/`scene_finished`
+probes. Dev-mode sandbox relaxations still active.
 
-### `slot:watch_trigger()` vs `context:watch_trigger_identity()`
+## Leads for the next session
 
-- `slot:watch_trigger()` — for a **named** type-31 slot (`context:slot("pt_start")
-  :watch_trigger()`). Resolves its type-31→type-60 mapping via the existing incoming-reference
-  join in `player_trigger::resolve()`.
-- `context:watch_trigger_identity(registry_key, slot_type, slot_index)` — new this session, for
-  arming by **raw wire identity** directly, needed for two cases:
-  - a trigger `context:slot(...)` cannot name (an "Unnamed trigger" in the debug browser with no
-    alias/tag Sunrise could recover a name for) — find its local Lua row anyway by iterating
-    `context:slot(1..N)` and matching `.registry_key/.slot_type/.slot_index` (works fine, just
-    slow-ish; ~1900 iterations took a moment but completed within the raised instruction budget);
-  - a type-60 target volume that has **no type-31 source at all** in the extracted data (see
-    below) — pass `slot_type = 60` directly instead of `31`, naming the target table itself.
-    `player_trigger::resolve()` was extended with a `resolve_direct_target` branch: when the
-    payload's `slotType == 60`, it looks up the `TriggerVolumeTable` directly by
-    `(registryKey, slotIndex)` instead of requiring an incoming type-31 reference. This only ever
-    runs for our own client-synthesized payloads (a real wire incident from the retail client
-    always names a genuine type-31 source), so it changes nothing for the real path.
-
-### `context:find_trigger_by_bubble(bubble_index, visible_index)` — new diagnostic tool
-
-Resolves the type-31 source (or, always, the type-60 table identity) of the Nth trigger row the
-debug "Scriptable Browser" trigger-volume panel would list for one bubble filter value, by
-replicating that panel's own row-enumeration code
-(`activity_host_trigger_volumes.cpp::materialize`) natively, since `state::build_data::scriptables`
-is not reachable from mission-script Lua directly. Assumes no text/scope filter is active in the
-panel (only the bubble filter). Returns `ok, registry_key, slot_type, slot_index, match_count,
-total_rows, table_registry_key, table_slot_type, table_slot_index` — `total_rows` tells you
-whether the requested index even exists for that bubble; the trailing three `table_*` values are
-the row's own type-60 identity, always populated once the row is found, independent of whether it
-has exactly one (or any) type-31 source.
-
-**Bubble index 9 = underwatch** (the bubble's own ordinal from the debug UI's Manual-Mode
-dropdown — *not* the `region_index`/slice-set value `72` used for `initial_state`; these are two
-completely different, easily-confused number spaces, a mistake already made and fixed once last
-session).
-
-Used this session to identify a real, drawable "Unnamed trigger" (row 65 of bubble 9) that turned
-out to have **zero** incoming type-31 references anywhere in the extracted data (confirmed by
-sweeping every plausible type-31 slot index, 0–300, on its owning object via
-`watch_trigger_identity` and finding only the two already-known ones). Type-30 "occupancy" was
-also tried against it (borrowing an existing occupancy slot, `pm_vo_nudge`, redirected via
-`slot:set_occupancy_condition`) and **also produced no event** — consistent with this session's
-earlier finding for `pt_start` that type-30 occupancy just does not reflect player spatial
-presence at all, for any trigger, and should be considered a dead end for this purpose generally.
-The `resolve_direct_target` extension above is what actually made this trigger usable.
-
-### Enter/exit direction
-
-The real wire schema has no enter/exit bit — the retail client, on the rare occasions its own
-native mechanism might fire, apparently only ever reports one direction. Since our own system
-fully controls both ends of the synthetic round trip, `resolvedObjectId` (decoded but never read
-by `resolve()`) now carries it: `0` = entered, `1` = exited. Exposed to Lua for free, since
-`event.resolved_object_id` was already a field on `on_event_player_trigger`. `player_trigger_watch`
-now reports **both** directions (previously entry-only).
-
-## Spawn-signal investigation: what actually happens between attach and control
-
-The original ask was "what client state changes happen between activity launch and the player
-really spawning" (with half a hope one of them lines up with the loading-screen fade-out). Three
-signals were tried and measured, in order of increasing accuracy, all confirmed via real timed
-log data from actual test runs (not guessed):
-
-1. **`context:region_arrival_pending()`** (from last session) — clears in **~500ms**. Reflects
-   only "the server-side region/slice-set selection resolved", not anything about the client
-   having actually streamed in or the audio subsystem being ready. Firing dialogue on this alone
-   is why last session's naive attempt looked "unreliable" — it wasn't flaky, it was just too
-   early combined with too short a buffer afterward.
-2. **`context:player_position_present()`** (new this session) — exposes
-   `client::player::position::snapshot().present` (whether the physics hook has found a real
-   local-player body to read). Cleared at **~18-19s** after attach in test runs — a real, working
-   spawn signal (used successfully to gate the Cue-1/squad-spawn logic for a while), but not the
-   earliest available one, and not derived from a named client-engine state.
-3. **`context:bootflow_step()` reaching 38 (`activity:in_world`)** (new this session, currently
-   used) — exposes the client's own already-hooked boot-flow step accessor
-   (`client::hooks::bootflow::raw_step()`, previously used only by a debug HUD overlay, never
-   exposed to mission-script Lua). Measured **~2.8s earlier** than `player_position_present` in a
-   back-to-back comparison on the same run, and unlike the other two, it is the client engine's
-   own named state (`activity:in_world`), not something Sunrise derives. **This is what the
-   mission script fires Cue 1 / the two "fake fight" squads on now.**
-
-Real measured boot-flow sequence from one test run (`bootflow_step`, each value held for several
-seconds — looks like a genuine authored loading/spawn choreography, not noise):
-`33 → 34 → (35, never observed at 300ms poll granularity) → 36 → 37 → 38`. Only `38` is named
-(`activity:in_world`, `kInWorld` constant in `world_step.cpp`); `33/34/36/37` are real, distinct,
-reproducible values but their meaning is **not yet identified** — a good next lead if a still
-earlier/more precise signal is ever needed (a step transition might line up with the black-screen
-fade-out specifically).
-
-Also checked and ruled out as *automatic* spawn signals (both real, both fire, neither useful for
-this):
-- **`on_event_phase_entered`** — purely reactive to the script's own `context:set_phase()` calls.
-  Cannot ever tell you about something you don't already know, by construction.
-- **`on_event_cinematic_terminated` / `on_event_cinematic_started`** — real native incident path
-  (schema 0x808087BF), needs no arming, but never fired in any test this session. Consistent with
-  the already-known permanently-missing intro-cinematic scene-seed resource (object 449 — see
-  below); most likely this is exactly the cinematic that never materializes.
-- **`on_event_player_trigger`** — reliable (it's our own system), but structurally **cannot** be
-  an earlier signal than `player_position_present`, since our own containment test itself depends
-  on a live player position existing to test in the first place. At best equal, realistically
-  later (walking to a box takes time).
-
-### Dialogue timing (measured, not guessed)
-
-Firing `slot(3):play_dialogue_cue{cue=1}` (row 3, `m_dialog_sensor`) has a real, **reproducible**
-gap before the line is actually audible, confirmed by stopwatching a fresh rt_cmd-fired cue
-several times: **~5-6 seconds of latency**, then **~4 seconds** of actual speech. This is not
-random/load-dependent (it reproduced identically whether fired right after a fresh relaunch or
-long after the world had settled), so the working theory is either a fixed engine
-cue-activation latency or (more likely) real authored lead-in silence baked into the clip itself,
-originally meant to be absorbed by the walk from spawn to the trigger box in the real game. The
-mission script now models this explicitly as two chained timers
-(`DIALOGUE_START_LATENCY_MS = 6000`, `DIALOGUE_SPEECH_MS = 4000`) before firing the
-"Defend your home" objective, rather than one guessed buffer.
-
-## Homecoming/mission_towerfall: current script behavior (fully working, tested)
-
-Sequence, in the order it actually happens:
-1. `on_start`: arms every entry in `watches` (retries every 500ms until the scriptables catalog
-   is ready and all are armed — see above); starts the poll loop.
-2. `bootflow_step` reaches 38 → spawns `sq_frame_fake_fight` and `sq_red_guard_fake_fight`
-   (`retire_on_return=true`), fires dialogue Cue 1, starts the 6s+4s timer chain.
-3. Timer chain elapses → fires the "Defend your home" HUD directive
-   (`slot_row=17312, name_hash=0x4FCECAB6, element=0`, the real recovered Bungie text).
-4. Player enters `pt_sc_underwatch_intro_stand` (named type-31 trigger, armed via
-   `slot:watch_trigger()`) → **retires** `sq_frame_fake_fight`/`sq_red_guard_fake_fight` (see
-   "retiring a squad" below), **spawns** `squad_first_contact_cabal` and
-   `squad_first_contact_cabal_backup_a`, fires the `d_underwatch_collapsing_wall` device
-   (unchanged from last session), fires dialogue Cue 5.
-5. Player **exits** `underwatch_start_zone` (the unnamed, no-type-31-source trigger, armed via
-   `watch_trigger_identity(2418521761, 60, 23)`) → fires dialogue Cue 6.
-
-`pt_start` (the very first trigger discovered last session) is still armed and logged but no
-longer drives anything — superseded by the `bootflow_step`-based spawn signal for Cue 1.
-
-### Retiring a squad (no dedicated "despawn" call exists)
-
-There is no native "remove this squad now" entry point. The working pattern found this session:
-get the squad's own count vector (`squad:counts()`), set every member's count to `0`
-(`counts:set(i, 0)`), then `squad:place{counts = counts, mode = context.sdk.squad_modes.replace}`.
-`retire_on_return` (used when spawning) is a completely different, authored "despawn when they
-return home" condition — not something a script can trigger directly.
-
-### Real dialogue cues recovered/used this session (slot row 3, `m_dialog_sensor`, same as Cue 1)
-
-Cue 1 (intro line), Cue 5 (first-contact/Cabal reveal), Cue 6 (after leaving the start zone) are
-all confirmed to accept (`transport_staged`) on slot row 3. Not yet verified whether every cue
-in the mission lives on this one dialogue sensor or whether later beats need a different slot —
-worth checking before assuming.
-
-## New native additions this session (all under `sunrise::`)
-
-Committed (in `7e3abdb`, see TRIGGER_WATCH.md/RT_BRIDGE.md for the user-facing side):
-- `src/client/activity/player_trigger_watch.h`/`.cpp` — the trigger-detection module.
-- `src/middleware/bap/activity_message/player_trigger_incident.h`/
-  `activity_player_trigger_incident_codec.cpp` — added `encode()` (mirrors the existing
-  `decode()`).
-- Lua wiring: `mission_script_lua_slot_api.cpp` (`slot_watch_trigger`), `mission_script_vm.h`
-  (`RegisterTriggerWatch` in `DefinitionApi`), `mission_script_sdk_bridge.cpp`
-  (`register_trigger_watch`), `mission_script_runtime.cpp` (`clear_watches` on real instance
-  close), `mission_script_runtime_attach.cpp` (finishes last session's PR-based `initial_state`
-  hardening — the lock-acquiring public wrapper).
-
-**Not yet committed** (ask before committing — this is fresh, untested-beyond-this-session's-manual-runs):
-- `src/client/hooks/bootflow/bootflow_hook_lifecycle.h`/`world_step.cpp` — added `raw_step()`
-  (the boot-flow step was already tracked for the HUD overlay; this just exposes the raw value
-  publicly instead of only the derived `in_world()` boolean).
-- `mission_script_vm.h` / `mission_script_sdk_bridge.cpp` / `mission_script_lua_context_api.cpp` /
-  `mission_script_lua_internal.h`:
-  - `context:player_position_present()` — exposes `client::player::position::snapshot().present`.
-  - `context:bootflow_step()` — exposes the raw boot-flow step integer.
-  - `context:find_trigger_by_bubble(bubble_index, visible_index)` — the debug-browser-row
-    lookup tool described above.
-  - `context:watch_trigger_identity(registry_key, slot_type, slot_index)` — arms a watch by raw
-    identity instead of a resolved Lua slot handle.
-- `mission_script_player_trigger.cpp` — added `resolve_direct_target` and the `slotType == 60`
-  branch in `resolve()`.
-- `mission_script_lua_slot_api.cpp` — `slot_watch_trigger` now returns 4 values (armed +
-  resolved volume identity) instead of just a boolean, so a script can tell watched triggers
-  apart without hardcoding values read off one test run.
-- `player_trigger_watch.h`/`.cpp` — enter/exit direction reporting (`resolvedObjectId` reused as
-  the flag).
-
-## Housekeeping / known temporary state
-
-- Dev-mode sandbox relaxations still active (from last session, unchanged): instruction budget
-  50,000,000 (raised from 100,000 — needed this session too, e.g. the ~1900-iteration local-slot
-  sweep to find an unnamed trigger's Lua row); `next`/`pairs`/`load` and the `string` pattern
-  functions restored. Revert before treating any of this as final/shippable.
-- Temporary diagnostics still in the mission script: `on_event_cinematic_started/terminated`
-  probes (harmless, currently never fire; remove once the cinematic question is settled for
-  good), the `bootflow_step`/`player_position_present` transition tracing in `poll()` (useful,
-  arguably worth keeping longer-term rather than stripping).
-- The `pm_vo_nudge` occupancy slot was redirected via rt_cmd during the type-30 investigation
-  (`filter = context:slot(1897), value = 1`) and never reset — harmless (nothing reads it), but
-  worth remembering it's not in its original authored state if that slot matters later.
-- Before treating any of this as "shippable": revert the sandbox relaxations, decide what to do
-  with the temporary probes above, and double check whether `context:find_trigger_by_bubble`/
-  `watch_trigger_identity` should stay as permanent community-facing API (they're currently
-  documented in code as diagnostic tools, not polished ones) or get a cleaner public wrapper.
-
-## Lua mission-script API reference (cumulative, updated this session)
-
-New/changed this session (see previous recap, preserved in git history, for the fuller
-pre-existing reference — `context.sdk.catalog.*`/`context.sdk.world.*`, `context:squad/slot/scene`,
-`squad:place`, `slot:set_directive`, `slot:play_dialogue_cue`, `slot:set_channel`,
-`on_event_effect_result`, `on_event_timer_elapsed`, etc.):
-
-- `context:player_position_present()` → bool. See spawn-signal section above.
-- `context:bootflow_step()` → integer (`-1` if unavailable). Only `38` is named
-  (`activity:in_world`).
-- `context:find_trigger_by_bubble(bubble_index, visible_index)` → `ok, registry_key, slot_type,
-  slot_index, match_count, total_rows, table_registry_key, table_slot_type, table_slot_index`.
-  Diagnostic tool, mirrors the debug "Scriptable Browser" trigger panel's own row order.
-- `context:watch_trigger_identity(registry_key, slot_type, slot_index)` → `armed,
-  volume_registry_key, volume_slot_type, volume_slot_index` (last three only when armed). Same
-  underlying mechanism as `slot:watch_trigger()`, addressed by raw identity.
-- `slot:watch_trigger()` → now returns `armed, volume_registry_key, volume_slot_type,
-  volume_slot_index` (was boolean-only last session).
-- `squad:counts()` → a mutable count-vector handle (`.count`, `.at(member)`, `.set(member,
-  value)`) seeded with the squad's default counts; `squad:place{counts=..., mode=...}` is how you
-  actually change placement. `context.sdk.squad_modes.{reinforce,replace,reserve}`.
-- `on_event_player_trigger`'s `event.resolved_object_id` is `0`/`1` (entered/exited) for our own
-  synthesized crossings (see "Enter/exit direction" above) — was previously unused/always `0`.
+1. Next beats after "Find Zavala": `scene_shaxx` (slot 14, `pt_start_shaxx_scene` /
+   `pt_player_near_shaxx`, doors `o_shaxx_door_*`, `seq_vig_shaxx_brawl_lp`), the civilian scenes
+   (`sc_civilian_*`), `sc_hero_moment_underwatch`. Same method: gate graph via `resource+0xC0`,
+   participants from the descriptor, then test live whether the scene spawns its own participants
+   (Cayde-style) or needs them pre-created (Centurion-style). Live commands go through
+   `E:\Sunrise\Gameind\Sunriset_cmd.txt` (read on the poll tick; `cmd result` in the log).
+2. `E:\Sunrise\Game\bin\x64\Sunrise\hashdump\` (~1100 blobs) is disposable.
+3. If a spatial target ever becomes necessary, read the native kind-9 consumer first; the
+   upstream `A97800 → AB4030 → A054C0 → A889E0` chain only led to the (group, action) → index
+   lookup (`A889E0`) and an animation/pose path, not to the target decoder.

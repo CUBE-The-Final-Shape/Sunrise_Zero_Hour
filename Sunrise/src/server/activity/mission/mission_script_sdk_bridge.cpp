@@ -9,10 +9,12 @@
 #include <cstdio>
 #include <cstring>
 #include <limits>
+#include <span>
 
 #include "../../../client/activity/player_trigger_watch.h"
 #include "../../../client/content/activity/scriptable_catalog_worker.h"
 #include "../../../client/hooks/bootflow/bootflow_hook_lifecycle.h"
+#include "../../../client/hooks/content_resolver/content_resolver.h"
 #include "../../../client/player/player_position.h"
 #include "../../../core/logging/log.h"
 #include "../../../state/build_data/runtime.h"
@@ -141,10 +143,17 @@ resolve_activity_binding_locator(const void* context,
     if (squad.slotIndex >= slots.size()) {
         return false;
     }
-    output.name = catalog.string(slots[squad.slotIndex].name);
+    const format::Slot& slot = slots[squad.slotIndex];
+    output.name = catalog.string(slot.name);
     output.nativeRow = static_cast<std::uint32_t>(&squad - allSquads.data());
     output.localRow = localRow;
     output.memberCount = members.size();
+    const auto allObjects = catalog.objects();
+    if (slot.objectIndex < allObjects.size()) {
+        output.registryKey = allObjects[slot.objectIndex].objectKey;
+    }
+    output.slotType = slot.slotType;
+    output.slotIndex = static_cast<std::uint16_t>(slot.slotIndex);
     return !output.id.empty();
 }
 
@@ -681,6 +690,12 @@ template <typename Select>
             if (!scene_id(catalog, occurrence, slot, candidate)) {
                 return false;
             }
+            // scene_slot() already proved exactly one resource exists for this slot.
+            const sdk::format::AuthoredSceneResource& resource =
+                sdk::slot_authored_scene_resources(catalog, slot).front();
+            candidate.resourceTag = resource.resourceTag;
+            candidate.configTag = resource.configTag;
+            candidate.descriptorOffset = resource.descriptorOffset;
             if (!select(candidate)) {
                 continue;
             }
@@ -1212,6 +1227,107 @@ bool program_identity(const sdk::BoundView& view,
     return client::hooks::bootflow::raw_step();
 }
 
+/**
+ * Diagnostic tool: reads the game's own content-hash resolver's definition blob for `hash`
+ * (e.g. an authored scene's resourceTag) directly out of process memory, so a script can scan it
+ * for embedded reference hashes the extracted SDK catalog does not expose (an authored scene's
+ * own event-gate node keys, in particular).
+ */
+[[nodiscard]] bool resolve_content_hash(const void* /*context*/,
+                                        std::uint32_t hash,
+                                        std::uint8_t* outBytes,
+                                        std::uint32_t outCapacity,
+                                        std::uint32_t& outLength) noexcept {
+    namespace resolver = client::hooks::content_resolver;
+    outLength = 0;
+    if (outBytes == nullptr || outCapacity == 0) {
+        return false;
+    }
+    resolver::install();
+    const std::size_t copied =
+        resolver::resolve(hash, std::span(reinterpret_cast<std::byte*>(outBytes), outCapacity));
+    outLength = static_cast<std::uint32_t>(copied);
+    return copied != 0;
+}
+
+/** Development diagnostic: see `lua_vm::DumpContentHash`. */
+[[nodiscard]] std::uint32_t dump_content_hash(const void* /*context*/,
+                                              std::uint32_t hash,
+                                              std::uint32_t depth) noexcept {
+    namespace resolver = client::hooks::content_resolver;
+    resolver::install();
+    return static_cast<std::uint32_t>(resolver::dump_tree(hash, depth));
+}
+
+/** Development diagnostic: see `lua_vm::FindEventGateKeys`. */
+[[nodiscard]] std::uint32_t find_event_gate_keys(const void* /*context*/,
+                                                 std::uint32_t hash,
+                                                 std::uint32_t* outKeys,
+                                                 std::uint32_t outCapacity) noexcept {
+    namespace resolver = client::hooks::content_resolver;
+    if (outKeys == nullptr || outCapacity == 0) {
+        return 0;
+    }
+    resolver::install();
+    return static_cast<std::uint32_t>(
+        resolver::find_event_gate_keys(hash, std::span(outKeys, outCapacity)));
+}
+
+/** See `lua_vm::UnregisterTriggerWatch`. */
+[[nodiscard]] bool unregister_trigger_watch(const void* context,
+                                            std::uint32_t registryKey,
+                                            std::uint32_t slotType,
+                                            std::uint32_t slotIndex) noexcept {
+    const sdk::BoundView* const view = context_view(context);
+    if (!valid_view(view)) {
+        return false;
+    }
+    trigger_watch::Identity identity{};
+    identity.binding = view->binding;
+    identity.activityClientGeneration = view->activityClientGeneration;
+    identity.registryKey = registryKey;
+    identity.slotType = static_cast<std::uint8_t>(slotType);
+    identity.slotIndex = static_cast<std::uint16_t>(slotIndex);
+    return trigger_watch::unregister_watch(identity);
+}
+
+/** See `lua_vm::SquadStateNames`: (group, name) pairs from the SDK actor-state-name table. */
+[[nodiscard]] std::uint32_t squad_state_names(const void* context,
+                                              std::uint32_t localRow,
+                                              lua_vm::ActorStateNameDefinition* outNames,
+                                              std::uint32_t outCapacity) noexcept {
+    const sdk::BoundView* const view = context_view(context);
+    if (!valid_view(view) || localRow == 0 || outNames == nullptr) {
+        return 0;
+    }
+    const sdk::Catalog& catalog = *view->catalog;
+    const auto squads = sdk::scenario_squads(catalog, *sdk::bound_scenario(*view));
+    if (localRow > squads.size()) {
+        return 0;
+    }
+    std::uint32_t found = 0;
+    for (const format::SquadMember& member : sdk::squad_members(catalog, squads[localRow - 1])) {
+        for (const format::ActorStateName& name :
+             sdk::actor_class_state_names(catalog, member.actorClassIndex)) {
+            bool seen = false;
+            for (std::uint32_t index = 0; index < found && index < outCapacity; ++index) {
+                seen = seen || (outNames[index].groupHash == name.groupHash
+                                && outNames[index].nameHash == name.nameHash);
+            }
+            if (seen) {
+                continue;
+            }
+            if (found < outCapacity) {
+                outNames[found] = {.groupHash = name.groupHash,
+                                   .nameHash = name.nameHash,
+                                   .ordinal = name.ordinal};
+            }
+            ++found;
+        }
+    }
+    return found;
+}
+
 /** The caller must keep the immutable view alive while Lua uses the returned callbacks. */
 lua_vm::DefinitionApi definition_api(const sdk::BoundView& view) noexcept {
     lua_vm::DefinitionApi output{
@@ -1240,9 +1356,14 @@ lua_vm::DefinitionApi definition_api(const sdk::BoundView& view) noexcept {
         .directiveElementCount = &directive_element_count,
         .regionArrivalPending = &region_arrival_pending,
         .registerTriggerWatch = &register_trigger_watch,
+        .unregisterTriggerWatch = &unregister_trigger_watch,
         .playerPositionPresent = &player_position_present,
         .bootflowStep = &bootflow_step,
         .findTriggerByBubbleVisibleIndex = &find_trigger_by_bubble_visible_index,
+        .resolveContentHash = &resolve_content_hash,
+        .dumpContentHash = &dump_content_hash,
+        .findEventGateKeys = &find_event_gate_keys,
+        .squadStateNames = &squad_state_names,
     };
     message_catalog::attach(output);
     output.catalog = catalog_definition_api(view);

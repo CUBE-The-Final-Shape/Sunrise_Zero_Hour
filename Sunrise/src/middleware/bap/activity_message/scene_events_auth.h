@@ -7,9 +7,13 @@
 #include "../../encoding/bit_writer.h"
 #include "auth_fields.h"
 
-// Type-43 authored scene Auth in its event-only form: generation, no clear, no dependencies,
-// a zero scalar, then the cumulative event keys. The generation stays while events are added,
-// because a new generation restarts the scene.
+// Type-43 authored scene Auth in its event-only form: generation, no clear, zero dependencies, a
+// zero scalar, then the cumulative event keys. The wire format has a dependency-count field, but
+// a nonzero dependency list is invalid here -- confirmed against a public reference
+// implementation's own encoder/tests, which hardcode a dependency count of zero and carry no
+// dependency-reference concept at all. The generation stays constant while events are added
+// (across separate calls, each resending the full cumulative list): bumping it restarts the scene
+// and discards every previously committed key.
 
 namespace sunrise::middleware::bap::activity_message::scene_events {
 
@@ -19,7 +23,8 @@ inline constexpr std::uint8_t kSlotType = 43;
 /** The SDK format table carries the same class and schema for authored scenes. */
 inline constexpr std::uint32_t kComponentClass = 0x80806382U;
 inline constexpr std::uint32_t kSchema = 0x8080626BU;
-/** Header: 32-bit generation, clear bit, 4-bit dependency count, 31-bit scalar, 6-bit count. */
+/** Header: 32-bit generation, clear bit, 4-bit dependency count (always 0), 31-bit scalar (always
+ * 0), 6-bit event count. */
 inline constexpr std::uint8_t kDependencyCountWidth = 4;
 inline constexpr std::uint8_t kScalarWidth = 31;
 inline constexpr std::uint8_t kEventCountWidth = 6;
@@ -34,7 +39,8 @@ inline constexpr std::size_t kMaximumBytes =
 inline constexpr std::uint32_t kInvalidEventKey = 0xFFFFFFFFU;
 
 /**
- * Encodes the scene body.
+ * Encodes the scene body: a constant-while-accumulating generation, zero dependencies, a zero
+ * scalar, and the cumulative distinct nonzero event keys.
  * @param generation Positive scene generation.
  * @param events Distinct nonzero event keys.
  * @param bytes Receives the byte count. @param bits Receives the meaningful bit count.

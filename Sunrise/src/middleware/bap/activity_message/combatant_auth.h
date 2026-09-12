@@ -81,6 +81,18 @@ struct ActionRequest final {
     std::uint32_t revision{};
     std::uint32_t group{};
     std::uint32_t action{};
+    /**
+     * Optional spatial target: the ClientRef the action plays relative to, with its 3-bit mode
+     * and 8-bit marker. `targetRegistryKey == 0` keeps the shipped no-target form (absent ref,
+     * mode 0, marker -1), which is the only form verified live. WARNING: every present target
+     * tried so far (a type-43 scene slot, a type-1 squad slot) stalled the client's main loop
+     * within seconds; the reference kind the native consumer accepts is unknown. Leave unset.
+     */
+    std::uint32_t targetRegistryKey{};
+    std::uint32_t targetSlotType{};
+    std::uint16_t targetSlotIndex{};
+    std::uint32_t targetMode{};
+    std::uint32_t targetMarker{kActionNoTargetMarker};
 };
 
 /** @return True when a 31-bit counter is positive and representable. */
@@ -147,15 +159,19 @@ write_root(encoding::bits::Writer& writer, std::uint32_t generation, bool enable
 }
 
 /**
- * Encodes one custom action program with no spatial target.
+ * Encodes one custom action program, with or without a spatial target (see ActionRequest).
  * @param output Exactly kActionBytes.
- * @return False on an out-of-range counter, a zero or no-name action, or a size mismatch.
+ * @return False on an out-of-range counter, a zero or no-name action, an out-of-range target
+ * field, or a size mismatch.
  */
 [[nodiscard]] inline bool encode_action(const ActionRequest& request,
                                         std::span<std::byte> output) noexcept {
     if (output.size() != kActionBytes || !valid_counter(request.generation)
         || !valid_counter(request.revision) || request.action == 0
-        || request.action == fields::kClientRefAbsentKey) {
+        || request.action == fields::kClientRefAbsentKey
+        || request.targetMode >= (1U << kActionTargetModeWidth)
+        || request.targetMarker >= (1U << kActionTargetMarkerWidth)
+        || request.targetSlotIndex > fields::kMaximumClientRefIndex) {
         return false;
     }
     encoding::bits::Writer writer(output);
@@ -166,13 +182,22 @@ write_root(encoding::bits::Writer& writer, std::uint32_t generation, bool enable
         {fields::kClientRefAbsentKey, 32}, // no additional identity
     }};
     const std::array<fields::Field, 3> tail{{
-        {0, kActionTargetModeWidth},
-        {kActionNoTargetMarker, kActionTargetMarkerWidth},
+        {request.targetMode, kActionTargetModeWidth},
+        {request.targetMarker, kActionTargetMarkerWidth},
         {0, fields::kPresenceWidth}, // .7 absent
     }};
+    // Evaluated in sequence with the other writes: the target sits after the identities.
+    const auto writeTarget = [&]() noexcept {
+        return request.targetRegistryKey == 0
+                   ? fields::write_absent_client_ref(writer)
+                   : fields::write_client_ref(writer,
+                                              request.targetRegistryKey,
+                                              request.targetSlotType,
+                                              request.targetSlotIndex);
+    };
     return write_root(writer, request.generation, true)
            && write_program_header(writer, request.revision, kActionProgramKind)
-           && fields::write_fields(writer, identities) && fields::write_absent_client_ref(writer)
+           && fields::write_fields(writer, identities) && writeTarget()
            && fields::write_fields(writer, tail)
            && fields::finish_exact(writer, kActionBits, kActionBytes, written);
 }

@@ -192,6 +192,22 @@ bool register_watch(const Identity& identity, const Geometry& geometry) noexcept
     return true;
 }
 
+bool unregister_watch(const Identity& identity) noexcept {
+    AcquireSRWLockExclusive(&g_lock);
+    for (WatchEntry& entry : g_watches) {
+        if (entry.occupied && same_binding(entry.identity.binding, identity.binding)
+            && entry.identity.registryKey == identity.registryKey
+            && entry.identity.slotType == identity.slotType
+            && entry.identity.slotIndex == identity.slotIndex) {
+            entry = {};
+            ReleaseSRWLockExclusive(&g_lock);
+            return true;
+        }
+    }
+    ReleaseSRWLockExclusive(&g_lock);
+    return false;
+}
+
 void clear_watches(const state::activity::SessionBinding& binding) noexcept {
     AcquireSRWLockExclusive(&g_lock);
     for (WatchEntry& entry : g_watches) {

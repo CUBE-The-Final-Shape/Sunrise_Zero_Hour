@@ -167,13 +167,51 @@ every one-shot watch right after it fires. Never mass-arm live again.
 Builds clean; deployed to `E:\Sunrise\Game\bin\x64\steam_api64.dll` (copy fails while the game
 runs — close it first).
 
-## Deployed script
+## Deployed script (not in the repo)
 
-`E:\Sunrise\Game\bin\x64\Sunrise\scripts\mission_towerfall.lua` (not in the repo) is cleaned of
-the experiment scaffolding; `mission_towerfall.lua.bak_run*` backups beside it record each run's
-state. Remaining diagnostics: `scene_fallback`/`wall_fallback` probes (no-ops now), the
-`squad_slot(...)`/`squad_state_names` probes at bootflow 38, and the cinematic/`scene_finished`
-probes. Dev-mode sandbox relaxations still active.
+`E:/Sunrise/Game/bin/x64/Sunrise/scripts/mission_towerfall.lua` is the root controller; the beats
+live in `scripts/mission_towerfall/` (`require` works with the runtime's `scripts\?.lua` search
+path): `common.lua` (squads, doors, cues, directives, music, `cell_action`, scene bind/activate/
+keys with live graph resolution from `{ resource = tag }` via `resolve_hash` +0xC0, full-id
+aliases for ambiguous scene names, watches with `on_enter`/`on_exit` and automatic release, named
+timers), `underwatch.lua` (bubble 9, `region = 72`) and `military.lua` (bubble 4, `region = 32`).
+`START_REGION` at the top of the root picks the spawn bubble; only that bubble's module and the
+following ones are installed, and `on_start` calls `context:clear_trigger_watches()` because the
+64-entry client watch table survives mission restarts in one process. Syntax check: a
+`luacheck.exe` built from `vendor/lua` (`luaL_loadfile` on each file), rebuilt in the scratchpad
+when needed. Live experiments go through `rt_cmd.txt` without restarting; only new watches need a
+mission restart. Dev-mode sandbox relaxations still active.
+
+## Military hangar (bubble 4) so far
+
+- `pt_hangar_early` (registry `0xAA9D42BE`, volume 233): `sq_hangar_overlook_a_a` + `_cent`; both
+  Amanda gating doors shut (`d_gating_amanda_start` = first door past the pod,
+  `d_gating_amanda_hangar` = second; open by default, position 0 snap shuts them).
+- `pt_hangar_spawn` (226): instantiate the pod object `o_cabal_drop_pod_military_hallway`.
+- leaving `pt_hangar_spawn_backup` (227): place `sq_military_hallway_destruction` with member
+  **count 3** (a one-member squad bound four times as the participant of
+  `sc_military_hallway_destruction`, graph `0x80BEB612`, one key) and start the scene: the pod
+  opens (~2.8s) and three Legionaries come out. Default counts give one; `replace` mode keeps the
+  pod shut; activating the scene before its key finishes it empty and a later key does not
+  restart it (only a new generation does). `sq_hangar_a_b` (own spawn rule) never spawns from the
+  hallway; `place{ spawn_rule = <sr_* slot>, spawn_lane = 1|2 }` (wire fields .11/.12) changed
+  nothing (.12 even suppressed the placement) — the option stays but is unused.
+- leaving `pt_hangar_spawn_pod` (228): open the first door, place `sq_hangar_overlook_b_b`.
+- `pt_amanda_skip` (219): on entry instantiate the command ship (`cabal_destroyer`, hangar copy
+  `slot/80b5036a/000000/0000/0004`) and open the second door; on exit instantiate the ten
+  `dogfight_*` objects and the escort `o_cabal_carrier_r/l` (`slot/80b5036a/00004e|4f`) with
+  their devices `d_cabal_carrier_r/l` (`…/000050|51`) at 1.0, then Cue 34.
+- `pt_hangar_combat` (238): music section 8 on the mission's `m_music_sensor` = slot row 2
+  (`set_music_section` is a mask, switch the previous section off first; sections have no names
+  anywhere, 8 was found by ear).
+- `pt_escape_explosion_a/b` (134/135): `sc_explosion_a/b` (hangar copies, resource `0x80B82715`,
+  graph `0x80BEB7B5`, one key, one point set each) plus the squads anchored around each volume —
+  a first guess, not yet validated live.
+- Native added this stretch: `context:clock_ms()` (interactable generations must keep increasing
+  across mission restarts — durable variables do not survive them), `context:clear_trigger_watches()`,
+  `squad:place{spawn_rule=, spawn_lane=}`.
+- Squads/objects whose names are shared by several objects (`sc_explosion_a`, `cabal_destroyer`,
+  `o_cabal_carrier_r`) must be addressed by their full SDK slot id / symbol id.
 
 ## Leads for the next session
 

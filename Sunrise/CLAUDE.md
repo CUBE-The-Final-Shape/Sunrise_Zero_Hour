@@ -197,23 +197,32 @@ mission restart. Dev-mode sandbox relaxations still active.
   hallway but does from `pt_mount_ship` (a pod crashes down with its three Legionaries).
   `place{ spawn_rule = <type-66 sr_* slot>, spawn_lane = 1 }` (wire field .11) **selects that
   spawn rule**: `sq_hangar_fodder_b` placed with `sr_caball_hangar_fodder` arrived in a crashing
-  pod. `sr_ceiling_spawn_melee/rear` did nothing there. **Never put a point set (type 48) in
-  .12 (`spawn_lane = 2`)**: it stalls the client's main loop, like the action-program targets.
-  The Legionary jump over the command ship at `pt_escape_explosion_a` is still unexplained:
-  none of the 14 actor states is a jump (2/4/6/8/10/12/14 resume combat, 3/5/7/13 are poses,
-  11 is a console interaction, 9 the scene entrance), and `sc_explosion_a` has no squad
-  participant.
+  pod. **Never put a point set (type 48) in .12 (`spawn_lane = 2`)**: it stalls the client's
+  main loop, like the action-program targets.
+  The Legionary jetpack arrival from behind the command ship at `pt_escape_explosion_a` (three
+  `sq_hangar_fodder_a/b/c`) is **parked, unexplained**: none of the 14 actor states is a jump
+  (2/4/6/8/10/12/14 resume combat, 3/5/7/13 are poses, 11 is a console interaction, 9 the
+  scene entrance); `sc_explosion_a` has no squad participant (point set 140 only); and every
+  hangar spawn rule tried live on `sq_hangar_fodder_a` at that spot did nothing —
+  `sr_phalanx`, `sr_ceiling_spawn_melee`, `sr_ceiling_spawn_rear`,
+  `sr_military_hallway_destruction` (no spawn, existing Cabal unaffected) — except
+  `sr_caball_hangar_fodder` (crashing pod). Remaining leads: a rule/point set owned by another
+  object (the ship?), or the .12 point-set path once the freeze is understood. For now the
+  three fodder are placed at their anchors on entering explosion A.
 - leaving `pt_hangar_spawn_pod` (228): open the first door, place `sq_hangar_overlook_b_b`.
 - `pt_amanda_skip` (219): on entry instantiate the command ship (`cabal_destroyer`, hangar copy
-  `slot/80b5036a/000000/0000/0004`) and open the second door; on exit instantiate the ten
-  `dogfight_*` objects and the escort `o_cabal_carrier_r/l` (`slot/80b5036a/00004e|4f`) with
-  their devices `d_cabal_carrier_r/l` (`…/000050|51`) at 1.0, then Cue 34.
+  `slot/80b5036a/000000/0000/0004`) together with the ten `dogfight_*` objects and the escort
+  `o_cabal_carrier_r/l` (`slot/80b5036a/00004e|4f`) with their devices `d_cabal_carrier_r/l`
+  (`…/000050|51`) at 1.0 (spawning the escort later was visible as a pop), then open the second
+  door; on exit Cue 34.
 - `pt_hangar_combat` (238): music section 8 on the mission's `m_music_sensor` = slot row 2
   (`set_music_section` is a mask, switch the previous section off first; sections have no names
   anywhere, 8 was found by ear).
 - `pt_escape_explosion_a/b` (134/135): `sc_explosion_a/b` (hangar copies, resource `0x80B82715`,
-  graph `0x80BEB7B5`, one key, one point set each) plus the squads anchored around each volume —
-  a first guess, not yet validated live.
+  graph `0x80BEB7B5`, one key, one point set each). A: scene + `sq_hangar_fodder_a/b/c` on entry,
+  `sq_hangar_a_a` + `sq_hangar_a_b_sniper` on exit (ahead of the player). B: scene on entry.
+- leaving `pt_mount_ship` (237): `sq_hangar_a_b` with full counts — its own rule
+  `sr_caball_hangar_a_b` is the pod that crashes down with three Legionaries (validated).
 - Native added this stretch: `context:clock_ms()` (interactable generations must keep increasing
   across mission restarts — durable variables do not survive them), `context:clear_trigger_watches()`,
   `squad:place{spawn_rule=, spawn_lane=}`.

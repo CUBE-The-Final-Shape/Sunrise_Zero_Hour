@@ -1,3 +1,5 @@
+#include <Windows.h>
+
 #include <array>
 #include <charconv>
 #include <cstddef>
@@ -274,6 +276,17 @@ namespace {
 }
 
 /**
+ * `context:clock_ms()` -> milliseconds since system boot (GetTickCount64). A monotonic source
+ * for per-object generations that must keep increasing across mission restarts in one game
+ * process, which durable mission variables do not survive.
+ */
+[[nodiscard]] int context_clock_ms(lua_State* state) {
+    static_cast<void>(luaL_checkudata(state, 1, kContextMetatable));
+    lua_pushinteger(state, static_cast<lua_Integer>(GetTickCount64()));
+    return 1;
+}
+
+/**
  * `context:squad_state_names{squad = <row>}` lists the distinct actor states the squad's member
  * classes declare, as `{group =, name =, ordinal =}` rows -- candidates for
  * `slot:play_actor_action{group =, action =}` on that squad's type-2 cell.
@@ -315,6 +328,20 @@ namespace {
  * @return armed (boolean), and when armed the resolved type-60 volume's registry_key, slot_type
  * and slot_index, exactly like `slot:watch_trigger()`.
  */
+/**
+ * `context:clear_trigger_watches()` drops every watch of this session binding. The client table
+ * holds 64 entries and survives a mission restart in the same process, so a script that arms
+ * watches it may never fire (beats skipped by starting later in the mission) must clear on start.
+ */
+[[nodiscard]] int context_clear_trigger_watches(lua_State* state) {
+    static_cast<void>(luaL_checkudata(state, 1, kContextMetatable));
+    Impl* const impl = impl_from_state(state);
+    if (impl != nullptr && impl->definitions.clearTriggerWatches != nullptr) {
+        impl->definitions.clearTriggerWatches(impl->definitions.context);
+    }
+    return 0;
+}
+
 /** `context:unwatch_trigger_identity(registry_key, slot_type, slot_index)` -> released (boolean). */
 [[nodiscard]] int context_unwatch_trigger_identity(lua_State* state) {
     static_cast<void>(luaL_checkudata(state, 1, kContextMetatable));
@@ -548,6 +575,8 @@ resolve_message_name(lua_State* state, std::string_view name, ActivityMessageDef
         lua_pushcfunction(state, &context_watch_trigger_identity);
     } else if (key == "unwatch_trigger_identity") {
         lua_pushcfunction(state, &context_unwatch_trigger_identity);
+    } else if (key == "clear_trigger_watches") {
+        lua_pushcfunction(state, &context_clear_trigger_watches);
     } else if (key == "resolve_hash") {
         lua_pushcfunction(state, &context_resolve_hash);
     } else if (key == "dump_hash") {
@@ -556,6 +585,8 @@ resolve_message_name(lua_State* state, std::string_view name, ActivityMessageDef
         lua_pushcfunction(state, &context_find_event_gate_keys);
     } else if (key == "squad_state_names") {
         lua_pushcfunction(state, &context_squad_state_names);
+    } else if (key == "clock_ms") {
+        lua_pushcfunction(state, &context_clock_ms);
     } else if (!push_key_context_member(state, key)) {
         lua_pushnil(state);
     }

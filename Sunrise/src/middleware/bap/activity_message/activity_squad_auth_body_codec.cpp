@@ -2,6 +2,7 @@
 #include <array>
 
 #include "../../encoding/bit_writer.h"
+#include "auth_fields.h"
 #include "definition.h"
 #include "scriptable_auth_internal.h"
 #include "squad_auth_body.h"
@@ -120,7 +121,16 @@ constexpr std::size_t kAfterSpawnReferenceAbsentFieldCount = 5;
         return false;
     }
     for (std::size_t index = 0; index < kSpawnReferenceCount; ++index) {
-        if (!writer.write(1, kPresenceWidth) || !scriptable_auth::write_absent_client_ref(writer)) {
+        const Preset::SpawnReference& reference = preset.spawnReferences[index];
+        if (!writer.write(1, kPresenceWidth)) {
+            return false;
+        }
+        if (reference.registryKey == 0) {
+            if (!scriptable_auth::write_absent_client_ref(writer)) {
+                return false;
+            }
+        } else if (!auth_fields::write_client_ref(
+                       writer, reference.registryKey, reference.slotType, reference.slotIndex)) {
             return false;
         }
     }
@@ -161,6 +171,65 @@ bool next_generation(const GenerationGuard& guard, std::uint32_t& next) noexcept
 }
 
 /** Encodes one canonical slot-type-1 body through a staging buffer. */
+namespace {
+struct PendingSpawnReference final {
+    std::uint32_t registryKey{};
+    std::uint32_t slotType{};
+    std::uint16_t slotIndex{};
+    std::array<Preset::SpawnReference, 2> references{};
+    bool occupied{};
+};
+constexpr std::size_t kPendingSpawnReferenceCapacity = 8;
+std::array<PendingSpawnReference, kPendingSpawnReferenceCapacity> g_pendingSpawnReferences{};
+} // namespace
+
+void set_pending_spawn_reference(std::uint32_t registryKey,
+                                 std::uint32_t slotType,
+                                 std::uint16_t slotIndex,
+                                 std::uint8_t lane,
+                                 const Preset::SpawnReference& reference) noexcept {
+    if (lane > 1) {
+        return;
+    }
+    PendingSpawnReference* slot = nullptr;
+    for (PendingSpawnReference& entry : g_pendingSpawnReferences) {
+        if (entry.occupied && entry.registryKey == registryKey && entry.slotType == slotType
+            && entry.slotIndex == slotIndex) {
+            slot = &entry;
+            break;
+        }
+        if (slot == nullptr && !entry.occupied) {
+            slot = &entry;
+        }
+    }
+    if (slot == nullptr) {
+        return;
+    }
+    if (!slot->occupied) {
+        *slot = {};
+        slot->registryKey = registryKey;
+        slot->slotType = slotType;
+        slot->slotIndex = slotIndex;
+        slot->occupied = true;
+    }
+    slot->references[lane] = reference;
+}
+
+bool take_pending_spawn_reference(std::uint32_t registryKey,
+                                  std::uint32_t slotType,
+                                  std::uint16_t slotIndex,
+                                  std::array<Preset::SpawnReference, 2>& output) noexcept {
+    for (PendingSpawnReference& entry : g_pendingSpawnReferences) {
+        if (entry.occupied && entry.registryKey == registryKey && entry.slotType == slotType
+            && entry.slotIndex == slotIndex) {
+            output = entry.references;
+            entry = {};
+            return true;
+        }
+    }
+    return false;
+}
+
 bool encode(const Preset& preset,
             const GenerationGuard& guard,
             std::span<std::byte> output,

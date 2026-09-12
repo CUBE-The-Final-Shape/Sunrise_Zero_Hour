@@ -371,6 +371,8 @@ using RegisterTriggerWatch = bool (*)(const void* context,
                                       std::uint32_t& outVolumeRegistryKey,
                                       std::uint32_t& outVolumeSlotType,
                                       std::uint32_t& outVolumeSlotIndex) noexcept;
+/** Drops every trigger watch of this mission's session binding (a script's own from an earlier run in the same process). */
+using ClearTriggerWatches = void (*)(const void* context) noexcept;
 /** Releases the watch `RegisterTriggerWatch` armed under the same identity. @return False if none. */
 using UnregisterTriggerWatch = bool (*)(const void* context,
                                         std::uint32_t registryKey,
@@ -505,6 +507,7 @@ struct DefinitionApi final {
     RegionArrivalPending regionArrivalPending{};
     RegisterTriggerWatch registerTriggerWatch{};
     UnregisterTriggerWatch unregisterTriggerWatch{};
+    ClearTriggerWatches clearTriggerWatches{};
     PlayerPositionPresent playerPositionPresent{};
     BootflowStep bootflowStep{};
     FindTriggerByBubbleVisibleIndex findTriggerByBubbleVisibleIndex{};

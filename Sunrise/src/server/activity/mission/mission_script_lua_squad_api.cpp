@@ -1,9 +1,11 @@
 #include <algorithm>
 #include <array>
+#include <limits>
 #include <cstddef>
 #include <cstdint>
 #include <string_view>
 
+#include "../../../middleware/bap/activity_message/squad_auth_body.h"
 #include "mission_script_lua_internal.h"
 #include "mission_script_lua_names.h"
 #include "mission_script_lua_resolve.h"
@@ -101,9 +103,31 @@ namespace sunrise::server::activity::mission::lua_vm::detail {
         return luaL_error(state, "activity squad is stale or invalid");
     }
     // Only these named arguments are accepted; any other key is refused.
-    static constexpr std::array<std::string_view, 3> kDeclared{
-        "counts", "mode", "retire_on_return"};
+    // `spawn_rule` (a slot handle, e.g. a type-66 sr_* slot) with `spawn_lane` (1 or 2) fills
+    // wire field .11 or .12 of the next type-1 body for this squad, selecting an alternative
+    // authored spawn rule such as a Cabal drop pod. Being established live.
+    static constexpr std::array<std::string_view, 5> kDeclared{
+        "counts", "mode", "retire_on_return", "spawn_rule", "spawn_lane"};
     refuse_unknown_arguments(state, kDeclared);
+    SlotHandle spawnRuleHandle{};
+    if (optional_argument(state, "spawn_rule", kSlotMetatable, spawnRuleHandle)) {
+        namespace squad_auth = middleware::bap::activity_message::squad_auth;
+        SlotDefinition rule{};
+        const lua_Integer lane = optional_integer_argument(state, "spawn_lane", 1);
+        if (!current_slot(state, spawnRuleHandle, rule) || rule.registryKey == 0
+            || rule.slotIndex > std::numeric_limits<std::uint16_t>::max() || lane < 1 || lane > 2
+            || definition.slotIndex > std::numeric_limits<std::uint16_t>::max()) {
+            return luaL_error(state, "spawn_rule must be a live slot and spawn_lane 1 or 2");
+        }
+        squad_auth::set_pending_spawn_reference(
+            definition.registryKey,
+            definition.slotType,
+            static_cast<std::uint16_t>(definition.slotIndex),
+            static_cast<std::uint8_t>(lane - 1),
+            squad_auth::Preset::SpawnReference{rule.registryKey,
+                                               rule.slotType,
+                                               static_cast<std::uint16_t>(rule.slotIndex)});
+    }
     CallFrame& frame = active_frame(state);
     Intent intent{};
     intent.kind = IntentKind::placeSquad;

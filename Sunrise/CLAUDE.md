@@ -1,4 +1,4 @@
-# Sunrise — Session Recap: Authored Scenes Play (type-43) — Wall, Centurion, Cayde and Shaxx beats restored
+# Sunrise — Session Recap: Homecoming Underwatch complete, Military hangar under way
 
 Community reimplementation of Destiny 2 (Shadowkeep-era) client/server. Goal of this
 work-in-progress effort: hand-author the Red War campaign's first mission ("Homecoming",

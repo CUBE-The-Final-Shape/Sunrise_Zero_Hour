@@ -379,16 +379,19 @@ void apply_scriptable_control(const ScriptableRequest& request, std::uint64_t no
         if (encoded) {
             const std::span<const std::int32_t> counts(request.requestedCounts.data(),
                                                        request.requestedCountLength);
+            squad::Preset preset{counts,
+                                 generation,
+                                 request.squadMode,
+                                 request.nameHash,
+                                 request.squadAuthoredProfile};
+            static_cast<void>(squad::take_pending_spawn_reference(
+                request.target.registryKey,
+                request.target.slotType,
+                static_cast<std::uint16_t>(request.target.slotIndex),
+                preset.spawnReferences));
             encoded = squad::next_generation(candidate.squad, generation)
-                      && squad::encode({counts,
-                                        generation,
-                                        request.squadMode,
-                                        request.nameHash,
-                                        request.squadAuthoredProfile},
-                                       candidate.squad,
-                                       pending.body,
-                                       written,
-                                       writtenBits);
+                      && (preset.generation = generation, true)
+                      && squad::encode(preset, candidate.squad, pending.body, written, writtenBits);
         }
         pending.generation = generation;
         if (writtenBits <= (std::numeric_limits<std::uint16_t>::max)()) {

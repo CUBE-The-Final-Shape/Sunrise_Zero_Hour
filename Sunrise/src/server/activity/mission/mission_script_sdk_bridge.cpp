@@ -1273,6 +1273,14 @@ bool program_identity(const sdk::BoundView& view,
         resolver::find_event_gate_keys(hash, std::span(outKeys, outCapacity)));
 }
 
+/** See `lua_vm::ClearTriggerWatches`. */
+void clear_trigger_watches(const void* context) noexcept {
+    const sdk::BoundView* const view = context_view(context);
+    if (valid_view(view)) {
+        trigger_watch::clear_watches(view->binding);
+    }
+}
+
 /** See `lua_vm::UnregisterTriggerWatch`. */
 [[nodiscard]] bool unregister_trigger_watch(const void* context,
                                             std::uint32_t registryKey,
@@ -1357,6 +1365,7 @@ lua_vm::DefinitionApi definition_api(const sdk::BoundView& view) noexcept {
         .regionArrivalPending = &region_arrival_pending,
         .registerTriggerWatch = &register_trigger_watch,
         .unregisterTriggerWatch = &unregister_trigger_watch,
+        .clearTriggerWatches = &clear_trigger_watches,
         .playerPositionPresent = &player_position_present,
         .bootflowStep = &bootflow_step,
         .findTriggerByBubbleVisibleIndex = &find_trigger_by_bubble_visible_index,

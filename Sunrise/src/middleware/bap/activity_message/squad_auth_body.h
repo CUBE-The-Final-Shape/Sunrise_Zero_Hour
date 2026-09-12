@@ -77,7 +77,35 @@ struct Preset final {
     std::optional<std::uint32_t> nameHash{};
     /** Actor-definition bytes +56..+59; field 5.0 remains the exact candidate lane zero. */
     std::array<std::int8_t, 4> authoredProfile{};
+    /**
+     * Wire fields .11 and .12, the spawn references the point-set resolver reads. A zero
+     * registryKey sends the unset ClientRef, which keeps the package's default authored spawn
+     * rule; a present ClientRef is meant to select another authored rule (a type-66 `sr_*`
+     * slot, e.g. a Cabal drop pod). Being established live; see CLAUDE.md.
+     */
+    struct SpawnReference final {
+        std::uint32_t registryKey{};
+        std::uint32_t slotType{};
+        std::uint16_t slotIndex{};
+    };
+    std::array<SpawnReference, 2> spawnReferences{};
 };
+
+/**
+ * Process-wide side channel: a spawn reference a script asks to attach to the next type-1
+ * body encoded for one squad ClientRef. Consumed by the encoder. Bounded and single-threaded
+ * with the Host output reducer.
+ */
+void set_pending_spawn_reference(std::uint32_t registryKey,
+                                 std::uint32_t slotType,
+                                 std::uint16_t slotIndex,
+                                 std::uint8_t lane,
+                                 const Preset::SpawnReference& reference) noexcept;
+/** @return True and fills `output` when a pending reference exists for the target, clearing it. */
+bool take_pending_spawn_reference(std::uint32_t registryKey,
+                                  std::uint32_t slotType,
+                                  std::uint16_t slotIndex,
+                                  std::array<Preset::SpawnReference, 2>& output) noexcept;
 
 /** Finds the next positive 31-bit spawn generation without wrapping. */
 [[nodiscard]] bool next_generation(const GenerationGuard& guard, std::uint32_t& next) noexcept;

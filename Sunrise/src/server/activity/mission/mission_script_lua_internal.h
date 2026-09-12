@@ -121,6 +121,11 @@ void register_slot_metatables(lua_State* state);
 
 [[nodiscard]] int context_index(lua_State* state);
 
+// Diagnostic probe (development tooling only), defined in mission_script_lua_probe_api.cpp.
+
+[[nodiscard]] int context_probe(lua_State* state);
+[[nodiscard]] int context_poll_command(lua_State* state);
+
 // Typed effects, each defined beside the handle it needs.
 
 [[nodiscard]] int squad_index(lua_State* state);

@@ -253,6 +253,10 @@ resolve_message_name(lua_State* state, std::string_view name, ActivityMessageDef
         lua_pushcfunction(state, &context_start_timer);
     } else if (key == "cancel_timer") {
         lua_pushcfunction(state, &context_cancel_timer);
+    } else if (key == "probe") {
+        lua_pushcfunction(state, &context_probe);
+    } else if (key == "poll_command") {
+        lua_pushcfunction(state, &context_poll_command);
     } else if (!push_key_context_member(state, key)) {
         lua_pushnil(state);
     }

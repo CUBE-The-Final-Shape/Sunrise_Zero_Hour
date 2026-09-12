@@ -172,6 +172,27 @@ namespace sdk = state::activity_sdk;
            && left.resourceTag == right.resourceTag;
 }
 
+/** TEMP diagnostic: pinpoints which exact check inside collect_scene_seeds refused the seed. */
+void log_scene_seed_diag(const char* reason,
+                         std::uint32_t objectIndex,
+                         std::uint32_t authSchema,
+                         std::uint32_t resourceTag) noexcept {
+    std::array<char, 160> line{};
+    const int written = std::snprintf(line.data(),
+                                      line.size(),
+                                      "ev=activity stage=scene_seed_diag reason=%s "
+                                      "object=%u auth_schema=%u resource_tag=%u",
+                                      reason,
+                                      objectIndex,
+                                      authSchema,
+                                      resourceTag);
+    if (written > 0) {
+        core::log::write(core::log::Channel::server,
+                         core::log::Level::warn,
+                         {line.data(), static_cast<std::size_t>(written)});
+    }
+}
+
 /** Collects and deduplicates exact type-43 seeds from the selected state occurrences. */
 [[nodiscard]] bool collect_scene_seeds(const sdk::BoundView& view,
                                        const sdk::MissionSeedSummary& summary,
@@ -179,12 +200,14 @@ namespace sdk = state::activity_sdk;
                                        std::size_t& outputCount) noexcept {
     outputCount = 0;
     if (view.catalog == nullptr) {
+        log_scene_seed_diag("no_catalog", 0, 0, 0);
         return false;
     }
     const sdk::Catalog& catalog = *view.catalog;
     const sdk::format::Scenario* const scenario = sdk::bound_scenario(view);
     const auto objects = catalog.objects();
     if (scenario == nullptr) {
+        log_scene_seed_diag("no_scenario", 0, 0, 0);
         return false;
     }
 
@@ -196,6 +219,7 @@ namespace sdk = state::activity_sdk;
         if (occurrence.scenarioIndex != summary.scenarioRow
             || occurrence.bubbleIndex != summary.bubbleRow
             || occurrence.objectIndex >= objects.size()) {
+            log_scene_seed_diag("occurrence_mismatch", occurrence.objectIndex, 0, 0);
             return false;
         }
         const sdk::format::Object& object = objects[occurrence.objectIndex];
@@ -209,20 +233,23 @@ namespace sdk = state::activity_sdk;
             continue;
         }
         if (outputCount >= scratch.rosterSceneSeeds.size()) {
+            log_scene_seed_diag("scratch_capacity", occurrence.objectIndex, 0, 0);
             return false;
         }
 
         const std::size_t first = outputCount;
         std::size_t produced = 0;
         const auto available = std::span(scratch.rosterSceneSeeds).subspan(first);
-        const auto sceneStatus = sdk::materialize_authored_scene_seeds(catalog, object, available, produced);
+        const sdk::AuthoredSceneSeedStatus status =
+            sdk::materialize_authored_scene_seeds(catalog, object, available, produced);
         // A scene seed that cannot be materialized (e.g. missing package resource in the SDK)
         // is skipped rather than refusing the entire roster. The client can still load the
         // region without it. This prevents one incomplete SDK entry from blocking the mission.
-        if (sceneStatus != sdk::AuthoredSceneSeedStatus::ready || produced > available.size()) {
-            core::log::writef(core::log::Channel::server, core::log::Level::warn,
-                "ev=activity stage=scene_seed_warning object_registry=%u object_tag=%u status=%d (skipping)",
-                object.objectKey, object.objectTag, static_cast<int>(sceneStatus));
+        if (status != sdk::AuthoredSceneSeedStatus::ready || produced > available.size()) {
+            log_scene_seed_diag("materialize_failed",
+                                occurrence.objectIndex,
+                                static_cast<std::uint32_t>(status),
+                                static_cast<std::uint32_t>(produced));
             continue;
         }
 
@@ -236,6 +263,10 @@ namespace sdk = state::activity_sdk;
                     continue;
                 }
                 if (!same_scene_seed(retained, candidate)) {
+                    log_scene_seed_diag("conflicting_duplicate",
+                                        occurrence.objectIndex,
+                                        candidate.authSchema,
+                                        candidate.resourceTag);
                     return false;
                 }
                 duplicate = true;
@@ -282,6 +313,25 @@ namespace sdk = state::activity_sdk;
             || seed.slotIndex > message::kMaximumSlotIndex
             || seed.authSchema != message::kAuthoredSceneAuthSchema
             || seed_slot_matches(seed, groups) > 1) {
+            std::array<char, 200> line{};
+            const int written = std::snprintf(
+                line.data(),
+                line.size(),
+                "ev=activity stage=scene_seed_diag reason=validate_scene_targets "
+                "object_tag=%u registry_key=%u resource_tag=%u slot_type=%u slot_index=%u "
+                "auth_schema=%u matches=%zu",
+                seed.objectTag,
+                seed.registryKey,
+                seed.resourceTag,
+                seed.slotType,
+                seed.slotIndex,
+                seed.authSchema,
+                seed_slot_matches(seed, groups));
+            if (written > 0) {
+                core::log::write(core::log::Channel::server,
+                                 core::log::Level::warn,
+                                 {line.data(), static_cast<std::size_t>(written)});
+            }
             return false;
         }
     }

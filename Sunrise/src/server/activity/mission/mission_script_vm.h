@@ -31,8 +31,15 @@ inline constexpr std::size_t kVariableStringByteCapacity =
 inline constexpr std::size_t kSquadMemberCapacity = 15;
 /** Script source is bounded before it reaches the parser. */
 inline constexpr std::size_t kSourceByteCapacity = 128U * 1024U;
-/** One callback is stopped after this many approximate VM instructions. */
-inline constexpr std::uint32_t kInstructionBudget = 100'000;
+/**
+ * One callback is stopped after this many approximate VM instructions.
+ * TEMPORARY DEV-MODE RELAXATION: raised 500x from the shipping value of 100'000 while authoring
+ * and testing mission scripts against real activity data (large unbatched catalog scans, etc.).
+ * Still bounded, not removed, so a genuine infinite loop cannot hang the server thread forever.
+ * Restore to 100'000 before any script authored under this budget is expected to run under the
+ * real one.
+ */
+inline constexpr std::uint32_t kInstructionBudget = 50'000'000;
 /** Generated mission modules are large declarations and execute only while a VM opens. */
 inline constexpr std::uint32_t kInitializationInstructionBudget = 2'000'000;
 /** Stable storage holds everything but the arena block, which the open program owns. */

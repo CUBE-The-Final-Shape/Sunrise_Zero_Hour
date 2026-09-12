@@ -815,6 +815,7 @@
     <ClCompile Include="src\server\activity\mission\mission_script_lua_state_api.cpp" />
     <ClCompile Include="src\server\activity\mission\mission_script_lua_message_api.cpp" />
     <ClCompile Include="src\server\activity\mission\mission_script_lua_peer_api.cpp" />
+    <ClCompile Include="src\server\activity\mission\mission_script_lua_probe_api.cpp" />
     <ClCompile Include="src\server\activity\mission\mission_script_lua_slot_api.cpp" />
     <ClCompile Include="src\server\activity\mission\mission_script_lua_value_api.cpp" />
     <ClCompile Include="src\server\activity\mission\mission_script_lua_enum_api.cpp" />
@@ -1101,6 +1102,7 @@
     <ClCompile Include="src\client\content\items\packages\package_root_tables.cpp" />
     <ClCompile Include="src\client\content\items\packages\package_item_rows.cpp" />
     <ClCompile Include="src\client\diagnostics\module_range.cpp" />
+    <ClCompile Include="src\client\diagnostics\activity_name_probe.cpp" />
     <ClCompile Include="src\client\process\freeze\client_process_freeze.cpp" />
     <ClCompile Include="src\core\settings\address_text.cpp" />
     <ClCompile Include="src\core\settings\server\gameplay\gameplay_settings_validation.cpp" />
@@ -1950,6 +1952,7 @@
     <ClInclude Include="src\middleware\content\packages\reader\locator_cache.h" />
     <ClInclude Include="src\server\bap\encrypted\push\queuez\queuez_push_reporting.h" />
     <ClInclude Include="src\client\diagnostics\module_range.h" />
+    <ClInclude Include="src\client\diagnostics\activity_name_probe.h" />
     <ClInclude Include="src\client\process\freeze\client_process_freeze.h" />
     <ClInclude Include="src\core\settings\address_text.h" />
     <ClInclude Include="src\core\settings\server\gameplay\definition.h" />

@@ -43,6 +43,8 @@ namespace {
         Entry{"authored_scene_resources", CatalogCollectionKind::authoredSceneResources},
         Entry{"authored_scene_squad_edges", CatalogCollectionKind::authoredSceneSquadEdges},
         Entry{"activity_binding_locators", CatalogCollectionKind::activityBindingLocators},
+        Entry{"directive_elements", CatalogCollectionKind::directiveElements},
+        Entry{"dialogue_cue_texts", CatalogCollectionKind::dialogueCueTexts},
     };
     const auto found = std::find_if(
         entries.begin(), entries.end(), [key](const Entry& entry) { return entry.key == key; });

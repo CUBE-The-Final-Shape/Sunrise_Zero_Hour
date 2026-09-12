@@ -1,6 +1,7 @@
 #include "activity_sdk_activity_inventory.h"
 
 #include <algorithm>
+#include <array>
 #include <cstring>
 #include <memory>
 #include <new>
@@ -8,10 +9,12 @@
 #include <utility>
 
 #include "../../../middleware/content/packages/tables/scenario_reader.h"
+#include "../../diagnostics/activity_name_probe.h"
 
 namespace sunrise::client::content::activity::sdk_generation::activity_inventory {
 namespace {
 
+namespace diagnostics = client::diagnostics;
 namespace named_tags = middleware::content::packages::named_tags;
 namespace reader = middleware::content::packages::reader;
 namespace tables = middleware::content::packages::tables;
@@ -548,13 +551,21 @@ bool build(const reader::Source& source,
         std::vector<tables::ActivityDefinition> definitions{};
         definitions.reserve(tables::kActivityDefinitionCount);
         if (!tables::visit_activity_definitions(bytes, &collect_definition, &definitions)
-            || definitions.size() != tables::kActivityDefinitionCount
-            || !join(definitions,
-                     output.activityRoots,
-                     output.scenarios,
-                     output.activities,
-                     output.diagnostics,
-                     output.bindingCompleteness)
+            || definitions.size() != tables::kActivityDefinitionCount) {
+            output = {};
+            return false;
+        }
+        // TEMP diagnostic: find the Homecoming activityIndex/definitionHash without stepping
+        // through the Mission Launch panel by eye. Safe to remove once identified.
+        static constexpr std::array<std::string_view, 3> kProbeNeedles{
+            "homecoming", "redwar", "red_war"};
+        diagnostics::probe_activity_names(definitions, kProbeNeedles);
+        if (!join(definitions,
+                 output.activityRoots,
+                 output.scenarios,
+                 output.activities,
+                 output.diagnostics,
+                 output.bindingCompleteness)
             || !validate(output)) {
             output = {};
             return false;

@@ -157,6 +157,10 @@ template <std::size_t Size>
         return catalog.authored_scene_squad_edges().size();
     case lua_vm::CatalogCollectionKind::activityBindingLocators:
         return catalog.activity_binding_locators().size();
+    case lua_vm::CatalogCollectionKind::directiveElements:
+        return catalog.directive_elements().size();
+    case lua_vm::CatalogCollectionKind::dialogueCueTexts:
+        return catalog.dialogue_cue_texts().size();
     }
     return 0;
 }
@@ -484,6 +488,32 @@ template <typename Row>
         CATALOG_U32("tag", row.tag)
         CATALOG_U32("reserved", row.reserved)
         CATALOG_U64("offset", row.offset)
+        break;
+    }
+    case lua_vm::CatalogCollectionKind::directiveElements: {
+        const format::DirectiveElement& row = *selected_row(catalog.directive_elements(), localRow);
+        CATALOG_STRING("id", row.id)
+        CATALOG_STRING("title", row.title)
+        CATALOG_STRING("description", row.description)
+        CATALOG_U32("slot_index", row.slotIndex)
+        CATALOG_U32("name_hash", row.nameHash)
+        CATALOG_I32("element_index", row.elementIndex)
+        CATALOG_U32("element_count", row.elementCount)
+        CATALOG_U32("title_container_tag", row.titleContainerTag)
+        CATALOG_U32("title_string_hash", row.titleStringHash)
+        CATALOG_U32("description_container_tag", row.descriptionContainerTag)
+        CATALOG_U32("description_string_hash", row.descriptionStringHash)
+        break;
+    }
+    case lua_vm::CatalogCollectionKind::dialogueCueTexts: {
+        const format::DialogueCueText& row = *selected_row(catalog.dialogue_cue_texts(), localRow);
+        CATALOG_STRING("id", row.id)
+        CATALOG_STRING("text", row.text)
+        CATALOG_U32("slot_index", row.slotIndex)
+        CATALOG_U32("cue_index", row.cueIndex)
+        CATALOG_U32("definition_hash", row.definitionHash)
+        CATALOG_U32("container_tag", row.containerTag)
+        CATALOG_U32("string_hash", row.stringHash)
         break;
     }
     }

@@ -45,6 +45,8 @@ enum class CatalogCollectionKind : std::uint8_t {
     authoredSceneResources,
     authoredSceneSquadEdges,
     activityBindingLocators,
+    directiveElements,
+    dialogueCueTexts,
 };
 
 /** Activity-owned ranges that account for the non-direct binding-tag section. */

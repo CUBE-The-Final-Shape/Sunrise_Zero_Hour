@@ -148,14 +148,16 @@ void configure_generated_require(lua_State* state, const ProgramIdentity& identi
 
     // Globals a sandboxed program may not reach: host IO, collection control, and any
     // iteration or protected call whose cost the instruction budget cannot charge.
-    constexpr std::array<const char*, 13> removedGlobals{
+    // TEMPORARY DEV-MODE RELAXATION: next/pairs/load stay available. next/pairs: table iteration
+    // is common in exploratory scripts, and the instruction budget above is already raised 500x
+    // to absorb the cost. load: context:poll_command() hands a script a remote Lua snippet to
+    // compile and pcall, so the remote-command channel needs it. Restore all three to this list
+    // before restoring the real budget in mission_script_vm.h.
+    constexpr std::array<const char*, 10> removedGlobals{
         "collectgarbage",
         "dofile",
         "getmetatable",
-        "load",
         "loadfile",
-        "next",
-        "pairs",
         "pcall",
         "print",
         "rawequal",
@@ -173,8 +175,10 @@ void configure_generated_require(lua_State* state, const ProgramIdentity& identi
 
     lua_getglobal(state, LUA_STRLIBNAME);
     // String functions whose pattern matching has no instruction bound.
-    constexpr std::array<const char*, 5> removedStringFunctions{
-        "dump", "find", "match", "gmatch", "gsub"};
+    // TEMPORARY DEV-MODE RELAXATION: find/match/gmatch/gsub stay available for exploratory
+    // scripts (real pattern search instead of hand-rolled substring loops). Restore all four
+    // before restoring the real instruction budget in mission_script_vm.h.
+    constexpr std::array<const char*, 1> removedStringFunctions{"dump"};
     for (const char* const name : removedStringFunctions) {
         lua_pushnil(state);
         lua_setfield(state, -2, name);

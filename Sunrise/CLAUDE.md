@@ -1,4 +1,4 @@
-# Sunrise — Session Recap: Authored Scenes Play (type-43) — Wall, Centurion and Cayde beats restored
+# Sunrise — Session Recap: Authored Scenes Play (type-43) — Wall, Centurion, Cayde and Shaxx beats restored
 
 Community reimplementation of Destiny 2 (Shadowkeep-era) client/server. Goal of this
 work-in-progress effort: hand-author the Red War campaign's first mission ("Homecoming",
@@ -37,7 +37,18 @@ on 2026-09-12, each observed by the user in-game and correlated with `script_pro
 8. **Cayde golden-gun beat (`pt_shaxx_enters`, volume 320) — confirmed complete:** bind →
    activate → the 17 keys of graph `0x80C3DEF5`, nothing else. The scene spawns Cayde and the
    three Legionaries itself, opens the door, plays Cues 12/13 and 15/16 itself, and never reports
-   `scene_finished`; the "Find Zavala" directive (`0x432D2C95`) goes out 21.5s after the trigger.
+   `scene_finished`; the "Find Zavala" directive (`0x432D2C95`) goes out 17s after the trigger.
+9. **Shaxx hallway — confirmed complete:** at `pt_centurion_intro_reinforce` the script also
+   places `sq_shaxx` (Frame-style; his scene does not spawn him), instantiates `o_shaxx_door_exit`
+   and `gun_door` (closed doors) and arms `door_interactable` (`set_interactable_object`).
+   `scene_shaxx` (graph `0x80BEB7EF`, 5 keys) is progress-gated, one key per trigger: key 1
+   (Shaxx stands and talks) on the unnamed zone volume 249 (bubble 9 row 28, resolved at arm
+   time via `bubble = {9, 28}`), key 2 (opens the exit door) at `pt_start_shaxx_scene` (275),
+   then at `pt_weapon` (registry `0x9027B6A1`, volume 4) keys 4 → 5 → 3 with 4s / 1.5s gaps
+   (4 and 5 are his two lines, 3 shuts the door — in index order the close cut the second
+   line). The four `sc_civilian_*` scenes (graphs `0x80BEB801/804/806/7F3`) fire at
+   `pt_sc_civilians_start` (324); no visible effect, kept. Past Shaxx, `on_event_object_interacted`
+   on `door_interactable` (slot 119) drives `d_gun_door` to position 1.0 and disables the prompt.
 
 ## The findings, in the order they were established
 
@@ -113,7 +124,14 @@ is unknown and not needed now that the scene positions the actor. (Runs 10–11 
 encoder ordering bug — the target was written before the root fields — fixed; run 12 with the
 fixed encoder still froze.)
 
-### 6. Participant policy is per scene; watches must be released
+### 6. Participant policy is per scene; watches must be released; keys can be progress-gated
+
+Shaxx's scene shows a third participant policy (place `sq_shaxx` normally, like the Frame) and
+that a scene's keys can each stand for a player-progress event: sent all at once the exit door
+opened and shut within 2s. Keys are a cumulative *set*, so they can be published out of index
+order (`publish_scene_keys{...}` in the script). A watch can now be declared as
+`bubble = {index, row}` and is resolved through `find_trigger_by_bubble` at arm time.
+
 
 `scene_cayde_golden_gun` (config `0x80B5099E`, resource `0x80B8273C`, 33 participants incl.
 `o_shaxx_door_enter/exit`) spawns its own Cayde and Legionaries — placing them (or posing the

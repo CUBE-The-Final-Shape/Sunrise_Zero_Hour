@@ -12,6 +12,7 @@
 #include <string_view>
 
 #include "../../../core/logging/log.h"
+#include "../../activity/player_trigger_watch.h"
 #include "../../hooking/detour.h"
 #include "../../player/player_position.h"
 #include "../bootflow/bootflow_hook_lifecycle.h"
@@ -84,6 +85,7 @@ std::int64_t __fastcall camera_transform(std::uint32_t playerIndex) noexcept {
     // Read here, not on the physics tick: that tick stops for a player who is standing still.
     hooks::fly::poll_toggle();
     client::player::position::poll();
+    client::activity::player_trigger_watch::poll();
     hooks::bootflow::poll_world_step();
     hooks::bootflow::poll_current_slice_set();
     return result;

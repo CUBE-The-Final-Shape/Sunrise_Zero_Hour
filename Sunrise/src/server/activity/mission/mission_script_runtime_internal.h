@@ -415,6 +415,13 @@ void attach_instance(const host::InstanceSnapshot& hostInstance,
                      std::uint64_t now) noexcept;
 /** Advances fresh programs only when their declared state roster has reached transport output. */
 void service_pending_starts(std::uint64_t now) noexcept;
+/**
+ * Probes the mission script for the activity to apply its initial_state slice-set override.
+ * Caller must hold the mission runtime lock: see apply_script_initial_state_override in
+ * mission_script_runtime.h for the public, lock-acquiring entry point.
+ */
+void apply_script_initial_state_override_impl(
+    state::activity::destination::DestinationSelection& selection) noexcept;
 
 // The diagnostics unit owns these. The attach unit and the panel snapshot call into them.
 

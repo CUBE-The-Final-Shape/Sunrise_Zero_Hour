@@ -244,6 +244,7 @@ void push_player_trigger(RuntimeInstance& instance, const host::Event& incident)
     }
     const state::build_data::scriptables::Snapshot* const world = instance.worldView.snapshot();
     if (world == nullptr) {
+        log_line(core::log::Level::warn, &instance, "player_trigger", "no_world_snapshot");
         return;
     }
     middleware::bap::activity_message::player_trigger_incident::Payload payload{};

@@ -771,13 +771,20 @@ void service_pending_starts(std::uint64_t now) noexcept {
     }
 }
 
-/** Probes the mission script for the activity to apply its initial_state slice-set override. */
-void apply_script_initial_state_override(state::activity::destination::DestinationSelection& selection) noexcept {
+/**
+ * Probes the mission script for the activity to apply its initial_state slice-set override.
+ * Runs under the mission runtime lock its caller (the public wrapper in
+ * mission_script_runtime.cpp) already holds, matching every other entry point in this file:
+ * read_source below writes into the shared g_source buffer, which is not otherwise guarded here.
+ */
+void apply_script_initial_state_override_impl(
+    state::activity::destination::DestinationSelection& selection) noexcept {
     if (selection.activityIndex < 0) {
         return;
     }
     const sdk::Snapshot catalog = sdk::snapshot();
     if (catalog == nullptr) {
+        log_line(core::log::Level::warn, nullptr, "initial_state_probe", "catalog_unavailable");
         return;
     }
     const format::Activity* activity = nullptr;
@@ -788,16 +795,27 @@ void apply_script_initial_state_override(state::activity::destination::Destinati
         }
     }
     if (activity == nullptr) {
+        log_line(core::log::Level::warn, nullptr, "initial_state_probe", "activity_not_found");
         return;
     }
     std::span<const char> source;
-    if (read_source(*catalog, *activity, source) != SourceStatus::ready) {
+    const SourceStatus sourceStatus = read_source(*catalog, *activity, source);
+    if (sourceStatus != SourceStatus::ready) {
+        log_line(core::log::Level::warn,
+                 nullptr,
+                 "initial_state_probe",
+                 sourceStatus == SourceStatus::missing    ? "no_script"
+                 : sourceStatus == SourceStatus::fileError ? "file_error"
+                                                           : "source_too_large");
         return;
     }
     const std::int32_t region = lua_vm::probe_initial_state_region(source, g_sdkLuaSearchPath.data());
     if (region >= 0) {
         selection.sliceSetOverride = static_cast<std::uint16_t>(region);
         selection.hasSliceSetOverride = true;
+        log_line(core::log::Level::warn, nullptr, "initial_state_probe", "region_applied");
+    } else {
+        log_line(core::log::Level::warn, nullptr, "initial_state_probe", "no_initial_state_declared");
     }
 }
 

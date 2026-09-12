@@ -16,6 +16,7 @@
 #include <string_view>
 #include <vector>
 
+#include "../../../client/activity/player_trigger_watch.h"
 #include "../../../core/logging/log.h"
 #include "../../../core/settings/settings.h"
 #include "../../../state/activity/mission/runtime.h"
@@ -234,6 +235,9 @@ void clear_instance(RuntimeInstance& instance, bool clearPending) noexcept {
         server::gameplay::squad_entity_retirement::cancel_placed_transition(
             instance.view.binding, instance.view.activityClientGeneration);
         clear_pending_events(instance.view.binding);
+        // A real close, not a generation rebind: any trigger volumes this program armed client-side
+        // geometric watching for no longer have a program to report a crossing to.
+        client::activity::player_trigger_watch::clear_watches(instance.view.binding);
     } else if (instance.occupied) {
         reset_pending_events_for_reattach(instance.view.binding);
     }
@@ -678,6 +682,19 @@ void shutdown() noexcept {
     clear_feed_cursors();
     g_enabled = false;
     g_pathReady = false;
+    ReleaseSRWLockExclusive(&g_lock);
+}
+
+/**
+ * Probes the mission script for the activity to apply its initial_state slice-set override.
+ * Acquires the mission runtime lock before delegating: the callers (session preparation, off the
+ * server's own service tick) do not otherwise hold it, unlike every instance-touching function
+ * above, and the probe reads the shared g_source buffer the same way attach does.
+ */
+void apply_script_initial_state_override(
+    state::activity::destination::DestinationSelection& selection) noexcept {
+    AcquireSRWLockExclusive(&g_lock);
+    apply_script_initial_state_override_impl(selection);
     ReleaseSRWLockExclusive(&g_lock);
 }
 

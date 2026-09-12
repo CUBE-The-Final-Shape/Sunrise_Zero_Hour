@@ -6,6 +6,7 @@
 #include <limits>
 #include <span>
 #include <string_view>
+#include <utility>
 
 #include "../../../../../core/logging/log.h"
 #include "../../../../../middleware/content/packages/tables/region_reader.h"
@@ -172,11 +173,26 @@ namespace sdk = state::activity_sdk;
            && left.resourceTag == right.resourceTag;
 }
 
-/** TEMP diagnostic: pinpoints which exact check inside collect_scene_seeds refused the seed. */
+/**
+ * Pinpoints which exact check inside collect_scene_seeds refused a seed.
+ * This runs on every roster re-evaluation, so a permanently unresolvable seed (e.g. a package
+ * resource the SDK never extracted) would otherwise repeat forever; each distinct (reason,
+ * object) pair is logged only once per process.
+ */
 void log_scene_seed_diag(const char* reason,
                          std::uint32_t objectIndex,
                          std::uint32_t authSchema,
                          std::uint32_t resourceTag) noexcept {
+    static std::array<std::pair<const char*, std::uint32_t>, 32> g_seen{};
+    static std::size_t g_seenCount = 0;
+    for (std::size_t index = 0; index < g_seenCount; ++index) {
+        if (g_seen[index].first == reason && g_seen[index].second == objectIndex) {
+            return;
+        }
+    }
+    if (g_seenCount < g_seen.size()) {
+        g_seen[g_seenCount++] = {reason, objectIndex};
+    }
     std::array<char, 160> line{};
     const int written = std::snprintf(line.data(),
                                       line.size(),

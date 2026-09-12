@@ -341,6 +341,19 @@ using ResolveActivityBindingLocator = bool (*)(const void* context,
                                                std::uint32_t localRow,
                                                ActivityBindingLocatorDefinition& output) noexcept;
 using DefinitionCount = std::size_t (*)(const void* context) noexcept;
+/** True while the client has not yet physically streamed into the selected/initial_state region. */
+using RegionArrivalPending = bool (*)(const void* context) noexcept;
+/**
+ * Arms client-side geometric detection for one exact type-31 trigger slot: the owning object's
+ * registryKey, and the source slot's own type (always 31) and index. `on_event_player_trigger`
+ * fires the same way it would for a client-reported crossing.
+ * @return False when the slot's authored volume geometry could not be resolved or exceeds the
+ * watcher's bounded capacity.
+ */
+using RegisterTriggerWatch = bool (*)(const void* context,
+                                      std::uint32_t registryKey,
+                                      std::uint32_t slotType,
+                                      std::uint32_t slotIndex) noexcept;
 
 /** Native SDK/live projection used by the sandbox; no borrowed pointer is script-visible. */
 struct DefinitionApi final {
@@ -377,6 +390,8 @@ struct DefinitionApi final {
     CatalogDefinitionApi catalog{};
     ManifestDefinitionApi manifest{};
     WorldDefinitionApi world{};
+    RegionArrivalPending regionArrivalPending{};
+    RegisterTriggerWatch registerTriggerWatch{};
 };
 
 using Intent = state::activity::mission::TypedIntent;

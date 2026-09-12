@@ -25,4 +25,15 @@ struct Payload final {
 /** Decodes the fixed schema-0x8080879F payload, including its required zero padding. */
 [[nodiscard]] bool decode(std::span<const std::byte> input, Payload& output) noexcept;
 
+/**
+ * Encodes the fixed schema-0x8080879F payload for a synthesized incident.
+ * The leading client-reference-offset bits carry no meaning `decode` reads, so they are written
+ * zero; a round trip through `decode` recovers exactly the fields given here.
+ * @param input The ClientRef and resolved target id to encode. `resolvedObjectId` is accepted for
+ * wire completeness only; native resolution never reads it back.
+ * @param output Exactly `kPayloadBytes` bytes, cleared first.
+ * @return True when every field fit its wire width and the buffer size matched.
+ */
+[[nodiscard]] bool encode(const Payload& input, std::span<std::byte> output) noexcept;
+
 } // namespace sunrise::middleware::bap::activity_message::player_trigger_incident

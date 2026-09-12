@@ -120,6 +120,7 @@ void register_slot_metatables(lua_State* state);
 // The running callback's activity binding, defined in mission_script_lua_context_api.cpp.
 
 [[nodiscard]] int context_index(lua_State* state);
+[[nodiscard]] int context_region_arrival_pending(lua_State* state);
 
 // Diagnostic probe (development tooling only), defined in mission_script_lua_probe_api.cpp.
 
@@ -186,5 +187,8 @@ void register_slot_metatables(lua_State* state);
 
 /** Loads the 32-lane client-atom program one type-2 combatant runs on its bound actor. */
 [[nodiscard]] int slot_run_atoms(lua_State* state);
+
+/** Arms client-side geometric detection for one type-31 trigger slot. */
+[[nodiscard]] int slot_watch_trigger(lua_State* state);
 
 } // namespace sunrise::server::activity::mission::lua_vm::detail

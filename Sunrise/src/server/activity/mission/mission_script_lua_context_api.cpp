@@ -81,6 +81,21 @@ namespace {
 
 } // namespace
 
+/**
+ * True until the client has physically streamed into the region this mission selected (via
+ * initial_state or select_state). A script that fires an effect immediately in on_start risks
+ * the client not having arrived yet; polling this on a short timer is the robust alternative to
+ * guessing a fixed delay.
+ */
+[[nodiscard]] int context_region_arrival_pending(lua_State* state) {
+    static_cast<void>(luaL_checkudata(state, 1, kContextMetatable));
+    Impl* const impl = impl_from_state(state);
+    const bool pending = impl == nullptr || impl->definitions.regionArrivalPending == nullptr
+                          || impl->definitions.regionArrivalPending(impl->definitions.context);
+    lua_pushboolean(state, pending ? 1 : 0);
+    return 1;
+}
+
 /** Resolves the squad one Lua argument names, by handle or by index. */
 [[nodiscard]] bool resolve_squad(lua_State* state, int selector, SquadDefinition& output) {
     Impl* const impl = impl_from_state(state);
@@ -257,6 +272,8 @@ resolve_message_name(lua_State* state, std::string_view name, ActivityMessageDef
         lua_pushcfunction(state, &context_probe);
     } else if (key == "poll_command") {
         lua_pushcfunction(state, &context_poll_command);
+    } else if (key == "region_arrival_pending") {
+        lua_pushcfunction(state, &context_region_arrival_pending);
     } else if (!push_key_context_member(state, key)) {
         lua_pushnil(state);
     }

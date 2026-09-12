@@ -2,15 +2,23 @@
 
 #include <algorithm>
 #include <array>
+#include <bit>
+#include <cmath>
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
 #include <limits>
 
+#include "../../../client/activity/player_trigger_watch.h"
+#include "../../../client/content/activity/scriptable_catalog_worker.h"
+#include "../../../core/logging/log.h"
+#include "../../../state/build_data/runtime.h"
+#include "../../../state/build_data/scriptables/scriptable_catalog.h"
 #include "../activity_sdk_mission_runtime.h"
 #include "mission_script_catalog_sdk_bridge.h"
 #include "mission_script_message_catalog.h"
+#include "mission_script_player_trigger.h"
 
 namespace sunrise::server::activity::mission::sdk_bridge {
 namespace {
@@ -18,6 +26,11 @@ namespace {
 namespace sdk = state::activity_sdk;
 namespace format = state::activity_sdk::format;
 namespace scenes = activity_sdk_mission;
+namespace scriptables = state::build_data::scriptables;
+namespace trigger_watch = client::activity::player_trigger_watch;
+// Named apart from `scriptables` above: this is the client-side worker that fills the
+// state::build_data::scriptables catalog on request, not the catalog/data namespace itself.
+namespace scriptable_extraction = client::content::activity::scriptables;
 
 // Every occurrence text id starts with this family prefix.
 constexpr std::string_view kOccurrencePrefix = "object-occurrence/";
@@ -807,6 +820,178 @@ template <typename Select>
                                                   }));
 }
 
+/** @return True only for the bit-exact identity transform the corpus proves for this data. */
+[[nodiscard]] bool identity_transform(const scriptables::TriggerVolumeInstance& instance) noexcept {
+    constexpr std::array<std::uint32_t, 4> identity{0, 0, 0, 0x3F800000U};
+    for (std::size_t lane = 0; lane < identity.size(); ++lane) {
+        if (std::bit_cast<std::uint32_t>(instance.rotation[lane]) != identity[lane]
+            || std::bit_cast<std::uint32_t>(instance.position[lane]) != identity[lane]) {
+            return false;
+        }
+    }
+    return true;
+}
+
+/** Copies one authored trigger-volume instance's exact geometry into the bounded watcher shape. */
+[[nodiscard]] bool copy_trigger_geometry(const scriptables::Snapshot& snapshot,
+                                         const scriptables::TriggerVolumeInstance& instance,
+                                         trigger_watch::Geometry& output) noexcept {
+    output = {};
+    if (!instance.complete || instance.active == 0 || !identity_transform(instance)
+        || !std::isfinite(instance.extrusion) || instance.extrusion < 0.0F
+        || instance.vertexCount == 0 || instance.triangleCount == 0
+        || instance.vertexCount > trigger_watch::kMaxVertices
+        || instance.triangleCount > trigger_watch::kMaxTriangles
+        || instance.firstVertex + instance.vertexCount > snapshot.triggerVolumeVertices.size()
+        || instance.firstTriangle + instance.triangleCount
+               > snapshot.triggerVolumeTriangles.size()) {
+        return false;
+    }
+    output.extrusion = instance.extrusion;
+    output.vertexCount = instance.vertexCount;
+    for (std::size_t index = 0; index < instance.vertexCount; ++index) {
+        const scriptables::TriggerVolumeVertex& vertex =
+            snapshot.triggerVolumeVertices[instance.firstVertex + index];
+        output.vertices[index] = {vertex.value[0], vertex.value[1], vertex.value[2]};
+    }
+    output.triangleCount = instance.triangleCount;
+    for (std::size_t index = 0; index < instance.triangleCount; ++index) {
+        const scriptables::TriggerVolumeTriangle& triangle =
+            snapshot.triggerVolumeTriangles[instance.firstTriangle + index];
+        output.triangles[index] = {
+            triangle.indices[0], triangle.indices[1], triangle.indices[2]};
+    }
+    return true;
+}
+
+/**
+ * Arms client-side detection for one type-31 trigger slot.
+ * Resolves the same type-31-to-type-60 mapping a real player-trigger incident resolves against,
+ * copies that volume's authored geometry, and registers it with the client-side watcher, which
+ * from then on tests the live local player position against it every frame.
+ */
+[[nodiscard]] bool register_trigger_watch(const void* context,
+                                          std::uint32_t registryKey,
+                                          std::uint32_t slotType,
+                                          std::uint32_t slotIndex) noexcept {
+    const sdk::BoundView* const view = context_view(context);
+    if (!valid_view(view)) {
+        core::log::writef(core::log::Channel::server,
+                          core::log::Level::warn,
+                          "ev=mission_script stage=trigger_watch_diag reason=invalid_view");
+        return false;
+    }
+    // This catalog is only ever built on request (normally from the debug "Scriptable Browser"
+    // panel); nothing else in the mission runtime asks for it, so it starts out empty. Requesting
+    // it here is free once it is already built or building for this scenario.
+    const auto& destination = view->binding.destination;
+    const std::string_view scenarioName(
+        reinterpret_cast<const char*>(destination.packageName.data()), destination.packageNameLength);
+    state::build_data::scenarios::Definition layout{};
+    if (scenarioName.empty() || !state::build_data::find_scenario_layout(scenarioName, layout)) {
+        core::log::writef(core::log::Channel::server,
+                          core::log::Level::warn,
+                          "ev=mission_script stage=trigger_watch_diag reason=no_scenario_layout");
+        return false;
+    }
+    static_cast<void>(scriptable_extraction::request(layout.tag, scenarioName, false));
+
+    // Not yet built or still building: an ordinary, expected state while the background worker
+    // catches up, not a problem worth logging. The caller (a Lua timer loop) retries.
+    const scriptables::SnapshotView snapshot = scriptables::snapshot();
+    if (snapshot == nullptr || snapshot->scenarioTag != layout.tag
+        || snapshot->status != scriptables::BuildStatus::ready) {
+        return false;
+    }
+    middleware::bap::activity_message::player_trigger_incident::Payload payload{};
+    payload.registryKey = registryKey;
+    payload.slotType = static_cast<std::int8_t>(slotType);
+    payload.slotIndex = static_cast<std::int16_t>(slotIndex);
+    player_trigger::Source source{};
+    const player_trigger::ResolveStatus resolveStatus =
+        player_trigger::resolve(*snapshot, payload, source);
+    if (resolveStatus != player_trigger::ResolveStatus::ready) {
+        core::log::writef(core::log::Channel::server,
+                          core::log::Level::warn,
+                          "ev=mission_script stage=trigger_watch_diag reason=resolve_failed "
+                          "status=%u registry_key=%u slot_type=%u slot_index=%u",
+                          static_cast<unsigned>(resolveStatus),
+                          registryKey,
+                          slotType,
+                          slotIndex);
+        return false;
+    }
+
+    const scriptables::TriggerVolumeTable* table = nullptr;
+    for (const scriptables::TriggerVolumeTable& candidate : snapshot->triggerVolumeTables) {
+        if (candidate.registryKey == source.volumeRegistryKey
+            && candidate.slotType == source.volumeSlotType
+            && candidate.slotIndex == source.volumeSlotIndex) {
+            table = &candidate;
+            break;
+        }
+    }
+    if (table == nullptr || !table->complete || table->instanceCount == 0) {
+        core::log::writef(
+            core::log::Channel::server,
+            core::log::Level::warn,
+            "ev=mission_script stage=trigger_watch_diag reason=table_unavailable found=%d "
+            "complete=%d instances=%u volume_registry_key=%u volume_slot_type=%u "
+            "volume_slot_index=%u table_count=%zu",
+            table != nullptr ? 1 : 0,
+            table != nullptr ? static_cast<int>(table->complete) : -1,
+            table != nullptr ? table->instanceCount : 0U,
+            source.volumeRegistryKey,
+            static_cast<unsigned>(source.volumeSlotType),
+            static_cast<unsigned>(source.volumeSlotIndex),
+            snapshot->triggerVolumeTables.size());
+        return false;
+    }
+
+    trigger_watch::Geometry geometry{};
+    bool built = false;
+    for (std::uint32_t offset = 0; offset < table->instanceCount; ++offset) {
+        const std::uint32_t instanceRow = table->firstInstance + offset;
+        if (instanceRow >= snapshot->triggerVolumeInstances.size()) {
+            core::log::writef(core::log::Channel::server,
+                              core::log::Level::warn,
+                              "ev=mission_script stage=trigger_watch_diag "
+                              "reason=instance_row_out_of_range row=%u count=%zu",
+                              instanceRow,
+                              snapshot->triggerVolumeInstances.size());
+            return false;
+        }
+        if (copy_trigger_geometry(*snapshot, snapshot->triggerVolumeInstances[instanceRow], geometry)) {
+            built = true;
+            break;
+        }
+    }
+    if (!built) {
+        const scriptables::TriggerVolumeInstance& first =
+            snapshot->triggerVolumeInstances[table->firstInstance];
+        core::log::writef(
+            core::log::Channel::server,
+            core::log::Level::warn,
+            "ev=mission_script stage=trigger_watch_diag reason=geometry_unavailable "
+            "complete=%d active=%u identity=%d extrusion=%f vertices=%u triangles=%u",
+            static_cast<int>(first.complete),
+            static_cast<unsigned>(first.active),
+            static_cast<int>(identity_transform(first)),
+            static_cast<double>(first.extrusion),
+            first.vertexCount,
+            first.triangleCount);
+        return false;
+    }
+
+    trigger_watch::Identity identity{};
+    identity.binding = view->binding;
+    identity.activityClientGeneration = view->activityClientGeneration;
+    identity.registryKey = registryKey;
+    identity.slotType = static_cast<std::uint8_t>(slotType);
+    identity.slotIndex = static_cast<std::uint16_t>(slotIndex);
+    return trigger_watch::register_watch(identity, geometry);
+}
+
 [[nodiscard]] char hex_digit(std::uint8_t value) noexcept {
     // Lowercase hex digits; every digest and byte field is spelled this way.
     constexpr char digits[] = "0123456789abcdef";
@@ -896,6 +1081,23 @@ bool program_identity(const sdk::BoundView& view,
     return true;
 }
 
+/**
+ * True while the client has not yet physically streamed into the selected/initial_state region.
+ * An unresolved query (stale view, no lease yet) reports pending rather than arrived, so a script
+ * polling this can never fire on a false "arrived" reading.
+ */
+[[nodiscard]] bool region_arrival_pending(const void* context) noexcept {
+    const sdk::BoundView* const view = context_view(context);
+    if (!valid_view(view)) {
+        return true;
+    }
+    scenes::Snapshot snapshot{};
+    if (scenes::query(*view, snapshot) != scenes::Status::ready) {
+        return true;
+    }
+    return snapshot.regionArrivalPending;
+}
+
 /** The caller must keep the immutable view alive while Lua uses the returned callbacks. */
 lua_vm::DefinitionApi definition_api(const sdk::BoundView& view) noexcept {
     lua_vm::DefinitionApi output{
@@ -922,6 +1124,8 @@ lua_vm::DefinitionApi definition_api(const sdk::BoundView& view) noexcept {
         .slotCount = &slot_count,
         .taskSensorCount = &task_sensor_count,
         .directiveElementCount = &directive_element_count,
+        .regionArrivalPending = &region_arrival_pending,
+        .registerTriggerWatch = &register_trigger_watch,
     };
     message_catalog::attach(output);
     output.catalog = catalog_definition_api(view);

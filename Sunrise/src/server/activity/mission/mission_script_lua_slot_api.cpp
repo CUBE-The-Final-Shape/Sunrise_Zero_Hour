@@ -1078,6 +1078,33 @@ constexpr std::int8_t kFilterModeInside = 1;
     return queue_intent(state, frame, intent);
 }
 
+/**
+ * Arms client-side geometric detection for one type-31 trigger, so `on_event_player_trigger`
+ * fires the same way it would for a client-reported crossing (the retail client never sends one
+ * for the local player). Synchronous: the watcher is armed, or refused, before this call returns.
+ */
+[[nodiscard]] int slot_watch_trigger(lua_State* state) {
+    const auto* const handle =
+        static_cast<const SlotHandle*>(luaL_checkudata(state, 1, kSlotMetatable));
+    SlotDefinition definition{};
+    if (!current_slot(state, *handle, definition)) {
+        return luaL_error(state, "activity slot is stale or invalid");
+    }
+    if (!exact_trigger_slot(definition)) {
+        return luaL_error(state, "activity slot is not an exact type-31 trigger");
+    }
+    static constexpr std::array<std::string_view, 0> kDeclared{};
+    refuse_unknown_arguments(state, kDeclared);
+    Impl* const impl = impl_from_state(state);
+    const bool armed = impl != nullptr && impl->definitions.registerTriggerWatch != nullptr
+                       && impl->definitions.registerTriggerWatch(impl->definitions.context,
+                                                                 definition.registryKey,
+                                                                 definition.slotType,
+                                                                 definition.slotIndex);
+    lua_pushboolean(state, armed ? 1 : 0);
+    return 1;
+}
+
 /** Publishes one scene generation and its cumulative authored event keys. */
 [[nodiscard]] int slot_set_scene_events(lua_State* state) {
     namespace scene = middleware::bap::activity_message::scene_events;
@@ -1376,6 +1403,8 @@ constexpr std::int8_t kFilterModeInside = 1;
         lua_pushcfunction(state, &slot_run_atoms);
     } else if (key == "fire_trigger") {
         lua_pushcfunction(state, &slot_fire_trigger);
+    } else if (key == "watch_trigger") {
+        lua_pushcfunction(state, &slot_watch_trigger);
     } else if (key == "play_sequence") {
         lua_pushcfunction(state, &slot_play_sequence);
     } else if (key == "set_scene_events") {

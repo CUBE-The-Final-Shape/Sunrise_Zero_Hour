@@ -164,7 +164,8 @@ probes. Dev-mode sandbox relaxations still active.
    (`sc_civilian_*`), `sc_hero_moment_underwatch`. Same method: gate graph via `resource+0xC0`,
    participants from the descriptor, then test live whether the scene spawns its own participants
    (Cayde-style) or needs them pre-created (Centurion-style). Live commands go through
-   `E:\Sunrise\Gameind\Sunriset_cmd.txt` (read on the poll tick; `cmd result` in the log).
+   `E:\Sunrise\Gameind\Sunrise
+t_cmd.txt` (read on the poll tick; `cmd result` in the log).
 2. `E:\Sunrise\Game\bin\x64\Sunrise\hashdump\` (~1100 blobs) is disposable.
 3. If a spatial target ever becomes necessary, read the native kind-9 consumer first; the
    upstream `A97800 → AB4030 → A054C0 → A889E0` chain only led to the (group, action) → index

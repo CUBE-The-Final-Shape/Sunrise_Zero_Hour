@@ -41,11 +41,23 @@ inline constexpr std::uint32_t kPathComponentClass = 0x80807D9BU;
 inline constexpr std::uint8_t kPathMarkerWidth = 8;
 /** Marker 0 is the path start, marker 1 its destination. */
 inline constexpr std::uint32_t kPathDestinationMarker = 1;
-/** An action program names an authored group and action hash, with no spatial target. */
+/** An action program names an authored group and action hash, with an optional spatial target. */
 inline constexpr std::uint8_t kActionTargetModeWidth = 3;
 inline constexpr std::uint8_t kActionTargetMarkerWidth = 8;
 /** The 8-bit target marker stores -1 with a bias of 128. */
 inline constexpr std::uint32_t kActionNoTargetMarker = 127;
+/**
+ * Both the path handler (client rva `0xa97bb0`) and the action handler (`0xa97800`) resolve
+ * their ClientRef through the same routine, `0x4ffec0`, which accepts exactly two slot types:
+ * a point set and an authored path. Every other type leaves the handle at `0xffffffff`, and the
+ * handler then indexes its entity table with that value — the main-loop stall observed live.
+ * Refuse anything else before sending.
+ */
+inline constexpr std::uint32_t kPointSetSlotType = 48;
+/** @return True when `slotType` is a spatial reference either program's decoder accepts. */
+[[nodiscard]] constexpr bool spatial_reference_slot_type(std::uint32_t slotType) noexcept {
+    return slotType == kPointSetSlotType || slotType == kPathSlotType;
+}
 /** Field .7 delivery manifest: a 4-bit squad count, then one type-1 squad ClientRef each. */
 inline constexpr std::uint8_t kManifestCountWidth = 4;
 inline constexpr std::size_t kMaximumManifestSquads = 8;
@@ -63,6 +75,34 @@ inline constexpr std::size_t kDeliveryMaximumBytes =
 inline constexpr std::size_t kRetireBits = 77;
 inline constexpr std::size_t kRetireBytes = 10;
 
+/**
+ * One experimental program, for sweeping the eight program kinds whose body class is still
+ * unnamed (see RE-ACTOR-PROGRAMS.md). The ten decoded body shapes are all subsets of the
+ * pieces below, written in this order, so one encoder covers every kind:
+ * `word`, `floatBits`, reference, `marker` (8 bits), `bits6`, `bit`.
+ * Nothing here is validated by the client beyond its bit count: a shape that does not match
+ * the kind's real class is simply refused, which is exactly what makes the sweep informative.
+ */
+struct ProbeRequest final {
+    std::uint32_t generation{};
+    std::uint32_t revision{};
+    std::uint32_t kind{};
+    bool hasWord{};
+    std::uint32_t word{};
+    bool hasFloatBits{};
+    std::uint32_t floatBits{};
+    bool hasReference{};
+    std::uint32_t registryKey{};
+    std::uint32_t slotType{};
+    std::uint16_t slotIndex{};
+    bool hasMarker{};
+    std::uint32_t marker{};
+    bool hasBits6{};
+    std::uint32_t bits6{};
+    bool hasBit{};
+    bool bit{};
+};
+
 /** One squad the delivery manifest names. */
 struct SquadReference final {
     std::uint32_t registryKey{};
@@ -74,6 +114,20 @@ struct PathRequest final {
     std::uint32_t revision{};
     std::uint32_t registryKey{};
     std::uint16_t pathIndex{};
+    /**
+     * The reference kind: an authored path (type 58, the shipped form) or a point set
+     * (type 48), which the same resolver accepts — that is how one point becomes a movement
+     * destination in a region with no authored path.
+     */
+    std::uint32_t slotType{kPathSlotType};
+    /** Path marker (0 its start, 1 its destination) or, for a point set, the point index. */
+    std::uint32_t marker{kPathDestinationMarker};
+    /**
+     * The body's trailing bit. Written as 1 for an authored type-58 path, where it reads as
+     * "follow the authored curve". A point set has no curve, and live the actor only turned
+     * toward the point and handed control back — so this is the first thing to try at 0.
+     */
+    bool followCurve{true};
 };
 
 struct ActionRequest final {
@@ -84,9 +138,11 @@ struct ActionRequest final {
     /**
      * Optional spatial target: the ClientRef the action plays relative to, with its 3-bit mode
      * and 8-bit marker. `targetRegistryKey == 0` keeps the shipped no-target form (absent ref,
-     * mode 0, marker -1), which is the only form verified live. WARNING: every present target
-     * tried so far (a type-43 scene slot, a type-1 squad slot) stalled the client's main loop
-     * within seconds; the reference kind the native consumer accepts is unknown. Leave unset.
+     * mode 0, marker -1). A present reference must be a point set (type 48, the marker is the
+     * point index) or an authored path (type 58, marker 0 its start and 1 its destination):
+     * those are the only two types the native decoder resolves, and the type-43 scene slot and
+     * type-1 squad slot tried live stalled the client because the handler consumed the failed
+     * handle. See `spatial_reference_slot_type`.
      */
     std::uint32_t targetRegistryKey{};
     std::uint32_t targetSlotType{};
@@ -140,22 +196,100 @@ write_root(encoding::bits::Writer& writer, std::uint32_t generation, bool enable
                                       std::span<std::byte> output) noexcept {
     if (output.size() != kPathBytes || !valid_counter(request.generation)
         || !valid_counter(request.revision) || request.registryKey == 0
-        || request.pathIndex > fields::kMaximumClientRefIndex) {
+        || request.pathIndex > fields::kMaximumClientRefIndex
+        || !spatial_reference_slot_type(request.slotType)
+        || request.marker >= (1U << kPathMarkerWidth)) {
         return false;
     }
     encoding::bits::Writer writer(output);
     std::size_t written = 0;
     const std::array<fields::Field, 3> tail{{
-        {kPathDestinationMarker, kPathMarkerWidth},
-        {1, fields::kBoolWidth},     // follow the authored curve
+        {request.marker, kPathMarkerWidth},
+        {request.followCurve ? 1U : 0U, fields::kBoolWidth},
         {0, fields::kPresenceWidth}, // .7 absent
     }};
     return write_root(writer, request.generation, true)
            && write_program_header(writer, request.revision, kPathProgramKind)
            && fields::write_client_ref(
-               writer, request.registryKey, kPathSlotType, request.pathIndex)
+               writer, request.registryKey, request.slotType, request.pathIndex)
            && fields::write_fields(writer, tail)
            && fields::finish_exact(writer, kPathBits, kPathBytes, written);
+}
+
+/** Widest probe body: the action shape plus slack. */
+inline constexpr std::size_t kProbeMaximumBytes = 32;
+/** Program kinds the client dispatches, read from its jump table at rva `0xa977cc`. */
+inline constexpr std::uint32_t kMaximumProgramKind = 9;
+
+/**
+ * Encodes one experimental program.
+ * @param written Receives the byte count. @param bits Receives the meaningful bit count.
+ * @return False on an out-of-range counter, kind or piece, or when the body does not close.
+ */
+/**
+ * @return True when the pieces set on `request` are the body shape that kind is known to take.
+ * A body of the wrong bit length does not get refused by the client: it misparses and stalls the
+ * main loop (kind 8 with one extra bit did exactly that, live). So every kind whose shape we
+ * know is enforced here, and an unknown kind may only be probed one shape per game run.
+ */
+[[nodiscard]] constexpr bool probe_shape_allowed(const ProbeRequest& request) noexcept {
+    const bool refAndMarker = request.hasReference && request.hasMarker && !request.hasWord
+                              && !request.hasFloatBits && !request.hasBits6;
+    switch (request.kind) {
+    case kPathProgramKind: // 3: ClientRef, marker, follow bit -- use encode_path instead
+        return refAndMarker && request.hasBit;
+    case 8: // ClientRef, marker: verified live, and one extra bit stalls the client
+        return refAndMarker && !request.hasBit;
+    case kActionProgramKind: // 9: the action shape has its own encoder
+        return false;
+    default:
+        return true;
+    }
+}
+
+[[nodiscard]] inline bool encode_probe(const ProbeRequest& request,
+                                       std::span<std::byte> output,
+                                       std::size_t& written,
+                                       std::size_t& bits) noexcept {
+    if (output.size() < kProbeMaximumBytes || !valid_counter(request.generation)
+        || !valid_counter(request.revision) || request.kind > kMaximumProgramKind
+        || (request.hasMarker && request.marker >= (1U << kPathMarkerWidth))
+        || (request.hasBits6 && request.bits6 >= (1U << 6))
+        || request.slotIndex > fields::kMaximumClientRefIndex
+        || (request.hasReference && !spatial_reference_slot_type(request.slotType))
+        || !probe_shape_allowed(request)) {
+        return false;
+    }
+    encoding::bits::Writer writer(output);
+    if (!write_root(writer, request.generation, true)
+        || !write_program_header(writer, request.revision, request.kind)) {
+        return false;
+    }
+    if (request.hasWord && !writer.write(request.word, 32)) {
+        return false;
+    }
+    if (request.hasFloatBits && !writer.write(request.floatBits, 32)) {
+        return false;
+    }
+    if (request.hasReference
+        && !fields::write_client_ref(
+            writer, request.registryKey, request.slotType, request.slotIndex)) {
+        return false;
+    }
+    if (request.hasMarker && !writer.write(request.marker, kPathMarkerWidth)) {
+        return false;
+    }
+    if (request.hasBits6 && !writer.write(request.bits6, 6)) {
+        return false;
+    }
+    if (request.hasBit && !writer.write(request.bit ? 1U : 0U, fields::kBoolWidth)) {
+        return false;
+    }
+    if (!writer.write(0, fields::kPresenceWidth)) { // .7 absent
+        return false;
+    }
+    bits = writer.bit_count();
+    return writer.finish(written) && fields::bytes_match_bits(written, bits);
 }
 
 /**
@@ -171,7 +305,9 @@ write_root(encoding::bits::Writer& writer, std::uint32_t generation, bool enable
         || request.action == fields::kClientRefAbsentKey
         || request.targetMode >= (1U << kActionTargetModeWidth)
         || request.targetMarker >= (1U << kActionTargetMarkerWidth)
-        || request.targetSlotIndex > fields::kMaximumClientRefIndex) {
+        || request.targetSlotIndex > fields::kMaximumClientRefIndex
+        || (request.targetRegistryKey != 0
+            && !spatial_reference_slot_type(request.targetSlotType))) {
         return false;
     }
     encoding::bits::Writer writer(output);

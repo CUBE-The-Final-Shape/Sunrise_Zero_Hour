@@ -113,16 +113,37 @@ trigger; the scene claims the existing, non-fighting actor, places it at its aut
 and plays everything itself. This is presumably the general pattern for every scene with a
 combatant participant (`scene_cayde_golden_gun`, `sc_hero_moment_underwatch`, ...).
 
-### 5. Do NOT send a spatial target with an action program
+### 5. An action program's spatial target must be a point set or a path
 
-`combatant_auth::ActionRequest` now carries an optional target ClientRef + 3-bit mode + 8-bit
-marker (`play_actor_action{target=, target_mode=, target_marker=}`), added to try positioning
-the actor. Every present target tried (scene slot type 43; squad slot type 1; corrected encoder)
-**stalled the client's main loop within ~2s** (`hitch detected: mainloop world controller ...
-stalled`), i.e. a hard freeze. The fields stay in the API but unset; the accepted reference kind
-is unknown and not needed now that the scene positions the actor. (Runs 10–11 also had an
-encoder ordering bug — the target was written before the root fields — fixed; run 12 with the
-fixed encoder still froze.)
+`combatant_auth::ActionRequest` carries an optional target ClientRef + 3-bit mode + 8-bit marker
+(`play_actor_action{target=, target_mode=, target_marker=}`). Every target tried live (scene slot
+type 43; squad slot type 1) **stalled the client's main loop within ~2s**, i.e. a hard freeze.
+The 2026-09-13 RE explains it: the native resolver `4ffec0` accepts **only slot type 48 (a point
+set, the marker being the point index) and type 58 (an authored path)**; any other type leaves
+the handle at `0xffffffff`, which the handler then uses as a table index. Encoder and Lua API now
+refuse anything else, so a bad target errors instead of freezing. **Validated live**: a type-48
+point set as the target is accepted with no hitch at all (the first spatial target that ever
+survived), but it does not move the animation — state 9 plays at the same spot with and without
+it. Displacement has to come from the path program instead, so `play_actor_path` now takes a
+point set too (`marker` = point index). (Runs 10–11 also had an encoder ordering bug — the target
+was written before the root fields — fixed.)
+
+### 5c. `play_actor_program`: probing the unnamed kinds, and why it must stay one shape per run
+
+`slot:play_actor_program{generation=, revision=, kind=0..9, word=, float_bits=, ref=, marker=,
+bits6=, bit=}` emits any kind with any of the ten decoded body shapes (pieces are written in that
+order; an absent piece is not written). It is how kind 8 was identified as `{ClientRef, u8}`. A
+body of the **wrong bit length stalls the client** rather than being refused, so shapes are never
+batched and `combatant_auth::probe_shape_allowed` rejects the combinations known to be wrong.
+
+### 5b. A program drives an actor only if the program created it
+
+`play_actor_action` on the cell of a squad that is **not placed** creates a docile, immobile
+actor that then obeys every action (the Centurion recipe). An actor the squad spawned via
+`place` ignores the same sends — passive (`task_group = -1`) or with an active combat group
+alike. Reproduced both ways live. Every action needs the **double send**, poses included; and
+after `retire_squad`, re-place with explicit counts or the squad stays at zero members while
+every send still reports `ok=true`.
 
 ### 6. Participant policy is per scene; watches must be released; keys can be progress-gated
 
@@ -285,12 +306,23 @@ Full RE detail is in [RE-ACTOR-PROGRAMS.md](RE-ACTOR-PROGRAMS.md); the tool is
 
 ## Leads for the next session
 
-0. Finish the actor-program kinds: map the 10 vtables to their classes (constructor xrefs from
-   the class descriptors) and read the runtime kind table (read-only from our DLL); a
-   `{ClientRef, u8}` kind (`80807f77`/`80807f7f`) is the best candidate for "go to point";
-   the "couldn't find firing point" string sits beside the vtables (`fa_fodder` is a type-44
-   firing area). Then wire Underwatch squads to their objectives (`obj_cabal_first_contact`,
-   `obj_centurion_intro`, `obj_post_gun`).
+0. **Moving a combatant to a point is still unsolved, and the cheap options are exhausted.**
+   Live (see [RE-ACTOR-PROGRAMS.md](RE-ACTOR-PROGRAMS.md)): a type-48 point set resolves for the
+   path program (kind 3, either value of `follow`), for the new kind-8 program and for the action
+   target — every one of them only makes the actor *face* the point. Kind 8's body is
+   `{ClientRef, u8}`, proven by one extra bit stalling the client. Next step is therefore the
+   **runtime kind -> class table**, read read-only from inside our DLL, before any further live
+   send: a wrong body length is not refused, it freezes the game, so guessing costs one restart
+   per guess (`probe_shape_allowed` now blocks the shapes we already know are wrong). The other
+   open lead is the AI's own traversal — task group 13 already makes a distant fodder jet toward
+   the player.
+   Test rig that works: an actor **created by the program** on a squad the script never places
+   (`sq_hangar_a_a_flank__cell` in the open hangar, `sq_hangar_overlook_b_a__major` before the
+   doors), posed twice, re-posed before every new program. The kind → vtable dispatch is now
+   fully read from the code (10 kinds, 3 = path, 9 = action); naming the other eight needs a
+   runtime read of the kind → class table (read-only from our DLL) or one probe per kind. Then
+   wire Underwatch squads to their objectives (`obj_cabal_first_contact`, `obj_centurion_intro`,
+   `obj_post_gun`).
 1. Next beats after "Find Zavala": `scene_shaxx` (slot 14, `pt_start_shaxx_scene` /
    `pt_player_near_shaxx`, doors `o_shaxx_door_*`, `seq_vig_shaxx_brawl_lp`), the civilian scenes
    (`sc_civilian_*`), `sc_hero_moment_underwatch`. Same method: gate graph via `resource+0xC0`,

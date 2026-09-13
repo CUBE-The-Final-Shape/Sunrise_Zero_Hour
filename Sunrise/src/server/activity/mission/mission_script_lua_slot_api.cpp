@@ -739,12 +739,18 @@ constexpr std::int8_t kFilterModeInside = 1;
     return queue_slot_auth(state, squad, objective::kSchema, objective::kBits, body);
 }
 
-/** Creates a named actor and starts one package-authored movement path. */
+/**
+ * Creates a named actor and starts one movement program. `path` is an authored type-58 path
+ * (the shipped form, `marker` 0 its start and 1 its destination) or a type-48 point set, whose
+ * `marker` is the point index: the native resolver accepts both, so a single authored point can
+ * serve as a destination in a region that has no path at all.
+ */
 [[nodiscard]] int slot_play_actor_path(lua_State* state) {
     namespace combatant = middleware::bap::activity_message::combatant_auth;
     const auto* const handle =
         static_cast<const SlotHandle*>(luaL_checkudata(state, 1, kSlotMetatable));
-    static constexpr std::array<std::string_view, 3> kDeclared{"generation", "revision", "path"};
+    static constexpr std::array<std::string_view, 5> kDeclared{
+        "generation", "revision", "path", "marker", "follow"};
     refuse_unknown_arguments(state, kDeclared);
     const lua_Integer generation = checked_integer_argument(state, "generation");
     const lua_Integer revision = checked_integer_argument(state, "revision");
@@ -752,26 +758,110 @@ constexpr std::int8_t kFilterModeInside = 1;
     SlotDefinition actor{};
     SlotDefinition path{};
     if (!current_slot(state, *handle, actor) || !exact_combatant_slot(actor)
-        || !current_slot(state, reference, path) || path.slotType != combatant::kPathSlotType
-        || path.componentClass != combatant::kPathComponentClass
+        || !current_slot(state, reference, path)
+        || !combatant::spatial_reference_slot_type(path.slotType)
+        || (path.slotType == combatant::kPathSlotType
+            && path.componentClass != combatant::kPathComponentClass)
         || actor.objectTag != path.objectTag || actor.registryKey != path.registryKey) {
         return luaL_error(state,
-                          "actor path requires an exact member and same-registry type-58 path");
+                          "actor path requires an exact member and a same-registry type-58 path "
+                          "or type-48 point set");
     }
+    const lua_Integer marker =
+        optional_integer_argument(state,
+                                  "marker",
+                                  path.slotType == combatant::kPathSlotType
+                                      ? combatant::kPathDestinationMarker
+                                      : 0);
     if (!valid_counter(generation) || !valid_counter(revision)
-        || path.slotIndex > auth_fields::kMaximumClientRefIndex) {
+        || path.slotIndex > auth_fields::kMaximumClientRefIndex || marker < 0 || marker > 255) {
         return luaL_error(state,
-                          "actor path generation, revision or index is outside its native range");
+                          "actor path generation, revision, index or marker is outside its "
+                          "native range");
     }
     std::array<std::byte, combatant::kPathBytes> body{};
     if (!combatant::encode_path({static_cast<std::uint32_t>(generation),
                                  static_cast<std::uint32_t>(revision),
                                  path.registryKey,
-                                 static_cast<std::uint16_t>(path.slotIndex)},
+                                 static_cast<std::uint16_t>(path.slotIndex),
+                                 path.slotType,
+                                 static_cast<std::uint32_t>(marker),
+                                 optional_boolean_argument(state, "follow", true)},
                                 body)) {
         return luaL_error(state, "actor path encoder failed");
     }
     return queue_slot_auth(state, actor, combatant::kSchema, combatant::kPathBits, body);
+}
+
+/**
+ * Sends one experimental program body: `kind` (0..9) plus whichever body pieces the shape needs
+ * (`word`, `float_bits`, `ref` + `marker`, `bits6`, `bit`). Exists to sweep the program kinds
+ * whose body class is still unnamed; a shape that does not match the kind's class is refused by
+ * the client, which is the result we are after. A present `ref` is still restricted to the two
+ * slot types the native resolver accepts, so a sweep cannot stall the client.
+ */
+[[nodiscard]] int slot_play_actor_program(lua_State* state) {
+    namespace combatant = middleware::bap::activity_message::combatant_auth;
+    const auto* const handle =
+        static_cast<const SlotHandle*>(luaL_checkudata(state, 1, kSlotMetatable));
+    static constexpr std::array<std::string_view, 9> kDeclared{"generation",
+                                                               "revision",
+                                                               "kind",
+                                                               "word",
+                                                               "float_bits",
+                                                               "ref",
+                                                               "marker",
+                                                               "bits6",
+                                                               "bit"};
+    refuse_unknown_arguments(state, kDeclared);
+    combatant::ProbeRequest request{};
+    request.generation = static_cast<std::uint32_t>(checked_integer_argument(state, "generation"));
+    request.revision = static_cast<std::uint32_t>(checked_integer_argument(state, "revision"));
+    const lua_Integer kind = checked_integer_argument(state, "kind");
+    if (kind < 0 || kind > static_cast<lua_Integer>(combatant::kMaximumProgramKind)) {
+        return luaL_error(state, "program kind must be 0..9");
+    }
+    request.kind = static_cast<std::uint32_t>(kind);
+    // An absent piece stays zero and unwritten: -1 is the sentinel, never a value.
+    const auto piece = [state](const char* name, bool& present) -> lua_Integer {
+        const lua_Integer value = optional_integer_argument(state, name, -1);
+        present = value >= 0;
+        return present ? value : 0;
+    };
+    request.word = static_cast<std::uint32_t>(piece("word", request.hasWord));
+    request.floatBits = static_cast<std::uint32_t>(piece("float_bits", request.hasFloatBits));
+    request.marker = static_cast<std::uint32_t>(piece("marker", request.hasMarker));
+    request.bits6 = static_cast<std::uint32_t>(piece("bits6", request.hasBits6));
+    const lua_Integer bit = optional_integer_argument(state, "bit", -1);
+    request.hasBit = bit >= 0;
+    request.bit = bit > 0;
+    SlotDefinition actor{};
+    if (!current_slot(state, *handle, actor) || !exact_combatant_slot(actor)) {
+        return luaL_error(state, "program requires an exact combatant member");
+    }
+    SlotHandle reference{};
+    if (optional_argument(state, "ref", kSlotMetatable, reference)) {
+        SlotDefinition target{};
+        if (!current_slot(state, reference, target) || target.registryKey == 0
+            || target.slotIndex > std::numeric_limits<std::uint16_t>::max()) {
+            return luaL_error(state, "program ref is not a live slot");
+        }
+        if (!combatant::spatial_reference_slot_type(target.slotType)) {
+            return luaL_error(state, "program ref must be a point set or an authored path");
+        }
+        request.hasReference = true;
+        request.registryKey = target.registryKey;
+        request.slotType = target.slotType;
+        request.slotIndex = static_cast<std::uint16_t>(target.slotIndex);
+    }
+    std::array<std::byte, combatant::kProbeMaximumBytes> body{};
+    std::size_t written = 0;
+    std::size_t bits = 0;
+    if (!combatant::encode_probe(request, body, written, bits)) {
+        return luaL_error(state, "program encoder refused this shape");
+    }
+    return queue_slot_auth(
+        state, actor, combatant::kSchema, bits, std::span(body).first(written));
 }
 
 /** Runs an authored native custom action without recreating its actor. */
@@ -781,7 +871,9 @@ constexpr std::int8_t kFilterModeInside = 1;
     const auto* const handle =
         static_cast<const SlotHandle*>(luaL_checkudata(state, 1, kSlotMetatable));
     // `target` (a slot handle), `target_mode` (0..7) and `target_marker` (0..255) fill the
-    // program's otherwise-absent spatial target; all three are optional and unverified live.
+    // program's otherwise-absent spatial target. The native decoder resolves a point set
+    // (type 48, the marker is the point index) or an authored path (type 58); any other type
+    // stalls the client, so the encoder refuses it.
     static constexpr std::array<std::string_view, 7> kDeclared{
         "generation", "revision", "group", "action", "target", "target_mode", "target_marker"};
     refuse_unknown_arguments(state, kDeclared);
@@ -812,6 +904,10 @@ constexpr std::int8_t kFilterModeInside = 1;
         if (!current_slot(state, targetHandle, target) || target.registryKey == 0
             || target.slotIndex > std::numeric_limits<std::uint16_t>::max()) {
             return luaL_error(state, "actor action target is not a live slot");
+        }
+        if (!combatant::spatial_reference_slot_type(target.slotType)) {
+            return luaL_error(state,
+                              "actor action target must be a point set or an authored path");
         }
         request.targetRegistryKey = target.registryKey;
         request.targetSlotType = target.slotType;
@@ -1445,6 +1541,8 @@ constexpr std::int8_t kFilterModeInside = 1;
         lua_pushcfunction(state, &slot_set_public_event_state);
     } else if (key == "assign_combat_objective") {
         lua_pushcfunction(state, &slot_assign_combat_objective);
+    } else if (key == "play_actor_program") {
+        lua_pushcfunction(state, &slot_play_actor_program);
     } else if (key == "play_actor_path") {
         lua_pushcfunction(state, &slot_play_actor_path);
     } else if (key == "deliver_squad") {

@@ -230,6 +230,58 @@ bool take_pending_spawn_reference(std::uint32_t registryKey,
     return false;
 }
 
+namespace {
+struct PendingAuthoredProfile final {
+    std::uint32_t registryKey{};
+    std::uint32_t slotType{};
+    std::uint16_t slotIndex{};
+    std::array<std::int8_t, 4> profile{};
+    bool occupied{};
+};
+std::array<PendingAuthoredProfile, kPendingSpawnReferenceCapacity> g_pendingAuthoredProfiles{};
+} // namespace
+
+void set_pending_authored_profile(std::uint32_t registryKey,
+                                  std::uint32_t slotType,
+                                  std::uint16_t slotIndex,
+                                  const std::array<std::int8_t, 4>& profile) noexcept {
+    PendingAuthoredProfile* slot = nullptr;
+    for (PendingAuthoredProfile& entry : g_pendingAuthoredProfiles) {
+        if (entry.occupied && entry.registryKey == registryKey && entry.slotType == slotType
+            && entry.slotIndex == slotIndex) {
+            slot = &entry;
+            break;
+        }
+        if (slot == nullptr && !entry.occupied) {
+            slot = &entry;
+        }
+    }
+    if (slot == nullptr) {
+        return;
+    }
+    *slot = {};
+    slot->registryKey = registryKey;
+    slot->slotType = slotType;
+    slot->slotIndex = slotIndex;
+    slot->profile = profile;
+    slot->occupied = true;
+}
+
+bool take_pending_authored_profile(std::uint32_t registryKey,
+                                   std::uint32_t slotType,
+                                   std::uint16_t slotIndex,
+                                   std::array<std::int8_t, 4>& output) noexcept {
+    for (PendingAuthoredProfile& entry : g_pendingAuthoredProfiles) {
+        if (entry.occupied && entry.registryKey == registryKey && entry.slotType == slotType
+            && entry.slotIndex == slotIndex) {
+            output = entry.profile;
+            entry = {};
+            return true;
+        }
+    }
+    return false;
+}
+
 bool encode(const Preset& preset,
             const GenerationGuard& guard,
             std::span<std::byte> output,

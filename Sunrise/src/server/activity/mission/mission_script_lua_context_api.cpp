@@ -113,6 +113,28 @@ namespace {
     return 1;
 }
 
+/** `context:player_position()` -> `{x=, y=, z=}` of the local player, or nil when unseen. */
+[[nodiscard]] int context_player_position(lua_State* state) {
+    static_cast<void>(luaL_checkudata(state, 1, kContextMetatable));
+    Impl* const impl = impl_from_state(state);
+    float x = 0.0F;
+    float y = 0.0F;
+    float z = 0.0F;
+    if (impl == nullptr || impl->definitions.playerPosition == nullptr
+        || !impl->definitions.playerPosition(impl->definitions.context, x, y, z)) {
+        lua_pushnil(state);
+        return 1;
+    }
+    lua_createtable(state, 0, 3);
+    lua_pushnumber(state, x);
+    lua_setfield(state, -2, "x");
+    lua_pushnumber(state, y);
+    lua_setfield(state, -2, "y");
+    lua_pushnumber(state, z);
+    lua_setfield(state, -2, "z");
+    return 1;
+}
+
 /**
  * Exploratory: the client's raw boot-flow step. Only one value is named so far
  * (`activity:in_world` = 38); this is for observing the real spawn sequence, not a stable API.
@@ -567,6 +589,8 @@ resolve_message_name(lua_State* state, std::string_view name, ActivityMessageDef
         lua_pushcfunction(state, &context_region_arrival_pending);
     } else if (key == "player_position_present") {
         lua_pushcfunction(state, &context_player_position_present);
+    } else if (key == "player_position") {
+        lua_pushcfunction(state, &context_player_position);
     } else if (key == "bootflow_step") {
         lua_pushcfunction(state, &context_bootflow_step);
     } else if (key == "find_trigger_by_bubble") {

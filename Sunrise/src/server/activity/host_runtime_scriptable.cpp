@@ -389,6 +389,11 @@ void apply_scriptable_control(const ScriptableRequest& request, std::uint64_t no
                 request.target.slotType,
                 static_cast<std::uint16_t>(request.target.slotIndex),
                 preset.spawnReferences));
+            static_cast<void>(squad::take_pending_authored_profile(
+                request.target.registryKey,
+                request.target.slotType,
+                static_cast<std::uint16_t>(request.target.slotIndex),
+                preset.authoredProfile));
             encoded = squad::next_generation(candidate.squad, generation)
                       && (preset.generation = generation, true)
                       && squad::encode(preset, candidate.squad, pending.body, written, writtenBits);

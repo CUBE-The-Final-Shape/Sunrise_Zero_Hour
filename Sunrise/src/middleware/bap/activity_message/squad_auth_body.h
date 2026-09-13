@@ -107,6 +107,21 @@ bool take_pending_spawn_reference(std::uint32_t registryKey,
                                   std::uint16_t slotIndex,
                                   std::array<Preset::SpawnReference, 2>& output) noexcept;
 
+/**
+ * Same side channel for the nested field-5 authored profile (lanes 1..4, logical maxima
+ * 2/6/2/6). Every actor class in the package authors 0/0/0/0, so any non-zero value is a
+ * server-side per-spawn choice -- being established live (arrival style is the candidate).
+ */
+void set_pending_authored_profile(std::uint32_t registryKey,
+                                  std::uint32_t slotType,
+                                  std::uint16_t slotIndex,
+                                  const std::array<std::int8_t, 4>& profile) noexcept;
+/** @return True and fills `output` when a pending profile exists for the target, clearing it. */
+bool take_pending_authored_profile(std::uint32_t registryKey,
+                                   std::uint32_t slotType,
+                                   std::uint16_t slotIndex,
+                                   std::array<std::int8_t, 4>& output) noexcept;
+
 /** Finds the next positive 31-bit spawn generation without wrapping. */
 [[nodiscard]] bool next_generation(const GenerationGuard& guard, std::uint32_t& next) noexcept;
 

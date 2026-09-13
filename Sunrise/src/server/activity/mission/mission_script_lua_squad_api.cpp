@@ -44,6 +44,10 @@ namespace sunrise::server::activity::mission::lua_vm::detail {
         lua_pushinteger(state, static_cast<lua_Integer>(definition.slotType));
     } else if (key == "slot_index") {
         lua_pushinteger(state, static_cast<lua_Integer>(definition.slotIndex));
+    } else if (key == "spawner_config_tag") {
+        lua_pushinteger(state, static_cast<lua_Integer>(definition.spawnerConfigTag));
+    } else if (key == "spawn_rule_config_tag") {
+        lua_pushinteger(state, static_cast<lua_Integer>(definition.spawnRuleConfigTag));
     } else if (key == "counts") {
         lua_pushcfunction(state, &squad_counts);
     } else if (world_api::push_squad_member(state, definition, key)) {
@@ -106,9 +110,36 @@ namespace sunrise::server::activity::mission::lua_vm::detail {
     // `spawn_rule` (a slot handle, e.g. a type-66 sr_* slot) with `spawn_lane` (1 or 2) fills
     // wire field .11 or .12 of the next type-1 body for this squad, selecting an alternative
     // authored spawn rule such as a Cabal drop pod. Being established live.
-    static constexpr std::array<std::string_view, 5> kDeclared{
-        "counts", "mode", "retire_on_return", "spawn_rule", "spawn_lane"};
+    // `profile = {a, b, c, d}` overrides the nested field-5 authored profile (logical maxima
+    // 2/6/2/6; the package authors 0/0/0/0 for every actor class, so these are server choices).
+    static constexpr std::array<std::string_view, 6> kDeclared{
+        "counts", "mode", "retire_on_return", "spawn_rule", "spawn_lane", "profile"};
     refuse_unknown_arguments(state, kDeclared);
+    lua_getfield(state, 2, "profile");
+    if (!lua_isnoneornil(state, -1)) {
+        namespace squad_auth = middleware::bap::activity_message::squad_auth;
+        luaL_checktype(state, -1, LUA_TTABLE);
+        static constexpr std::array<lua_Integer, 4> kMaximumLogical{2, 6, 2, 6};
+        std::array<std::int8_t, 4> profile{};
+        for (int index = 0; index < 4; ++index) {
+            lua_rawgeti(state, -1, index + 1);
+            const lua_Integer value = luaL_optinteger(state, -1, 0);
+            lua_pop(state, 1);
+            if (value < 0 || value > kMaximumLogical[static_cast<std::size_t>(index)]) {
+                return luaL_error(state, "profile lane %d must be 0..%d", index + 1,
+                                  static_cast<int>(kMaximumLogical[static_cast<std::size_t>(index)]));
+            }
+            profile[static_cast<std::size_t>(index)] = static_cast<std::int8_t>(value);
+        }
+        if (definition.slotIndex > std::numeric_limits<std::uint16_t>::max()) {
+            return luaL_error(state, "squad slot index is out of range");
+        }
+        squad_auth::set_pending_authored_profile(definition.registryKey,
+                                                 definition.slotType,
+                                                 static_cast<std::uint16_t>(definition.slotIndex),
+                                                 profile);
+    }
+    lua_pop(state, 1);
     SlotHandle spawnRuleHandle{};
     if (optional_argument(state, "spawn_rule", kSlotMetatable, spawnRuleHandle)) {
         namespace squad_auth = middleware::bap::activity_message::squad_auth;

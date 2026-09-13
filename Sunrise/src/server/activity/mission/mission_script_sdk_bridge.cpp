@@ -154,6 +154,8 @@ resolve_activity_binding_locator(const void* context,
     }
     output.slotType = slot.slotType;
     output.slotIndex = static_cast<std::uint16_t>(slot.slotIndex);
+    output.spawnerConfigTag = squad.spawnerConfigTag;
+    output.spawnRuleConfigTag = squad.spawnRuleConfigTag;
     return !output.id.empty();
 }
 
@@ -1222,6 +1224,18 @@ bool program_identity(const sdk::BoundView& view,
     return client::player::position::snapshot().present;
 }
 
+/** The local player's world position, for placing live experiments relative to the map. */
+[[nodiscard]] bool player_position(const void* /*context*/, float& x, float& y, float& z) noexcept {
+    const client::player::position::Snapshot snapshot = client::player::position::snapshot();
+    if (!snapshot.present) {
+        return false;
+    }
+    x = snapshot.position[0];
+    y = snapshot.position[1];
+    z = snapshot.position[2];
+    return true;
+}
+
 /** Exploratory: the client's raw boot-flow step, for observing the real spawn sequence. */
 [[nodiscard]] std::int32_t bootflow_step(const void* /*context*/) noexcept {
     return client::hooks::bootflow::raw_step();
@@ -1367,6 +1381,7 @@ lua_vm::DefinitionApi definition_api(const sdk::BoundView& view) noexcept {
         .unregisterTriggerWatch = &unregister_trigger_watch,
         .clearTriggerWatches = &clear_trigger_watches,
         .playerPositionPresent = &player_position_present,
+        .playerPosition = &player_position,
         .bootflowStep = &bootflow_step,
         .findTriggerByBubbleVisibleIndex = &find_trigger_by_bubble_visible_index,
         .resolveContentHash = &resolve_content_hash,

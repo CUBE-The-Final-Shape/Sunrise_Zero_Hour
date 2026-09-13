@@ -72,6 +72,10 @@ struct SquadDefinition final {
     std::uint32_t registryKey{};
     std::uint32_t slotType{};
     std::uint16_t slotIndex{};
+    /** The package's authored spawner config and the type-66 spawn-rule config it resolves
+     *  to (0 when none) -- what the unset wire spawn references (.11/.12) fall back to. */
+    std::uint32_t spawnerConfigTag{};
+    std::uint32_t spawnRuleConfigTag{};
 };
 
 /** One activity-local authored-scene row resolved against the pinned SDK view. */
@@ -385,6 +389,8 @@ using UnregisterTriggerWatch = bool (*)(const void* context,
  * transitions rather than as a proven "just spawned here" signal.
  */
 using PlayerPositionPresent = bool (*)(const void* context) noexcept;
+/** Copies the local player's last published world position. @return False when unseen. */
+using PlayerPosition = bool (*)(const void* context, float& x, float& y, float& z) noexcept;
 /**
  * Exploratory: the client's raw boot-flow step (see `bootflow::raw_step`), read directly from the
  * retail engine's own loading/spawn state machine. Only one value is named so far
@@ -509,6 +515,7 @@ struct DefinitionApi final {
     UnregisterTriggerWatch unregisterTriggerWatch{};
     ClearTriggerWatches clearTriggerWatches{};
     PlayerPositionPresent playerPositionPresent{};
+    PlayerPosition playerPosition{};
     BootflowStep bootflowStep{};
     FindTriggerByBubbleVisibleIndex findTriggerByBubbleVisibleIndex{};
     ResolveContentHash resolveContentHash{};

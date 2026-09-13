@@ -1,5 +1,21 @@
 # Type-26 hop-on sensors (`slot:set_hop_on`)
 
+## Correction (2026-09-14): the live sends never left the server
+
+Everything this file said about hop-ons being "accepted without a stall and without an observable
+effect" is void. `activity_sdk_devices::detail::validate_auth` admits Auth bodies only from an
+allowlist of schemas this tree encodes, and neither the hop-on schema (`0x8080954B`) nor the
+toggle schema (`0x8080955A`) was on it. Every `set_hop_on` call was therefore refused on the
+server as `slot_auth_refused / invalid_body` before transmission. The script only ever saw its
+own queuing succeed (`ok=true`), and the refusal line was not being looked for. It surfaced when
+the first `set_toggle` was checked against the log.
+
+Both schemas are now on the allowlist. None of the earlier hop-on experiments (the flag and value
+sweeps, the squad and cell targets, the filter variants) tells us anything about how the client
+handles a hop-on, and all of them have to be run again. What still stands: the decoded layout,
+the width check against the slot metadata, and the fact that the client never reports hop-on
+Sense (that observation came from the client's own packets, not from our sends).
+
 ## What they are, and what this unlocks
 
 Authored `ho_*` slots are type-26 `hop_on_sensor` rows. The package uses them to impose a state

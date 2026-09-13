@@ -228,6 +228,33 @@ void trace_scene_sense(Instance& instance, const SenseInput& input) noexcept {
         trace.sourceGeneration = input.sourceGeneration;
     }
     const sense::DecodedPacket& packet = input.decoded;
+    // Development diagnostic: every type-26 hop-on object in the packet, whatever its decode
+    // status, before any validity filter -- shows whether the client reports hop-ons at all and,
+    // if it does, which check drops them before the mission feed can see them.
+    for (std::size_t index = 0; index < (std::min)(packet.objectCount, packet.objects.size());
+         ++index) {
+        const sense::DecodedObject& object = packet.objects[index];
+        if (object.slotType != 26) {
+            continue;
+        }
+        std::array<char, core::log::kLineCapacity> hopLine{};
+        const int hopWritten = std::snprintf(hopLine.data(), hopLine.size(), "ev=hop_on_sense registry=%08x index=%u schema=%08x status=%s "
+                           "generation=%u values=%u packet_status=%s truncated=%u",
+                           object.registryKey,
+                           static_cast<unsigned>(object.slotIndex),
+                           object.senseSchema,
+                           sense::object_status_name(object.status),
+                           object.generationPlusOne,
+                           object.valueCount,
+                           sense::decode_status_name(packet.status),
+                           packet.objectsTruncated ? 1U : 0U);
+        if (hopWritten > 0) {
+            core::log::write(core::log::Channel::server,
+                             core::log::Level::warn,
+                             {hopLine.data(),
+                              (std::min)(static_cast<std::size_t>(hopWritten), hopLine.size() - 1)});
+        }
+    }
     bool hasScene = false;
     const std::size_t retainedObjectCount = (std::min)(packet.objectCount, packet.objects.size());
     for (std::size_t index = 0; index < retainedObjectCount; ++index) {

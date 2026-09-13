@@ -338,6 +338,47 @@ void push_cinematic(RuntimeInstance& instance, const host::Event& incident) noex
 }
 
 /**
+ * Development diagnostic: logs the Sense body of every type-26 hop-on the client reports. The
+ * hop-on Auth body is understood (see HOP-ON-SENSORS.md) but inert so far, so this shows what
+ * the client itself says about those sensors -- including while an authored scene drives one,
+ * which is the one place the shipped values can be observed rather than guessed. A mission holds
+ * a handful of hop-ons, so the line volume is negligible.
+ */
+void push_hop_on_probe(RuntimeInstance& instance,
+                       const host::SenseObservationSnapshot& sense) noexcept {
+    constexpr std::uint32_t kHopOnSlotType = 26;
+    for (std::size_t index = 0; index < sense.observationCount; ++index) {
+        const host::SenseObservation& observation = sense.observations[index];
+        if (observation.key.slotType != kHopOnSlotType || observation.valueCount == 0
+            || observation.firstValue + observation.valueCount > sense.valueCount) {
+            continue;
+        }
+        std::array<char, 256> line{};
+        int written = std::snprintf(line.data(),
+                                    line.size(),
+                                    "hop_on sense registry=%08x index=%u generation=%u values=",
+                                    observation.key.registryKey,
+                                    static_cast<unsigned>(observation.key.slotIndex),
+                                    static_cast<unsigned>(observation.generationPlusOne));
+        for (std::uint32_t value = 0; value < observation.valueCount && written > 0; ++value) {
+            const sense_values::DecodedValue& decoded = sense.values[observation.firstValue + value];
+            const int added = std::snprintf(line.data() + written,
+                                            line.size() - static_cast<std::size_t>(written),
+                                            "%s%lld",
+                                            value == 0 ? "" : ",",
+                                            decoded.present
+                                                ? static_cast<long long>(decoded.signedValue)
+                                                : -1LL);
+            if (added <= 0) {
+                break;
+            }
+            written += added;
+        }
+        log_line(core::log::Level::warn, &instance, "hop_on", line.data());
+    }
+}
+
+/**
  * Raises one event per watched volume whose occupancy changed.
  * The client publishes occupancy as a level, so the edge is ours to derive. A volume seen for the
  * first time only records its level, because a first observation is not an entry.

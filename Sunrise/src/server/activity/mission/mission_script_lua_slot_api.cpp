@@ -12,6 +12,7 @@
 #include "../../../middleware/bap/activity_message/auth_schema_catalog.h"
 #include "../../../middleware/bap/activity_message/combatant_auth.h"
 #include "../../../middleware/bap/activity_message/hop_on_auth.h"
+#include "../../../middleware/bap/activity_message/toggle_auth.h"
 #include "../../../middleware/bap/activity_message/damage_monitor_auth.h"
 #include "../../../middleware/bap/activity_message/darkness_zone_auth.h"
 #include "../../../middleware/bap/activity_message/ghost_link_auth.h"
@@ -158,6 +159,15 @@ namespace {
 [[nodiscard]] bool exact_public_event_slot(const SlotDefinition& definition) noexcept {
     return definition.slotType == scriptable_auth::kType71SlotType
            && definition.authSchema == scriptable_auth::kType71Schema
+           && (definition.flags & format::kSlotSchemaJoinExact) != 0;
+}
+
+/** @return True when one live Slot row is an exact type-32 toggle sensor. */
+[[nodiscard]] bool exact_toggle_slot(const SlotDefinition& definition) noexcept {
+    namespace toggle = middleware::bap::activity_message::toggle_auth;
+    return definition.slotType == toggle::kSlotType
+           && definition.componentClass == toggle::kComponentClass
+           && definition.authSchema == toggle::kSchema
            && (definition.flags & format::kSlotSchemaJoinExact) != 0;
 }
 
@@ -872,6 +882,45 @@ constexpr std::int8_t kFilterModeInside = 1;
     }
     return queue_slot_auth(
         state, actor, combatant::kSchema, bits, std::span(body).first(written));
+}
+
+/**
+ * Sets one type-32 toggle: `slot:set_toggle{state = -1..2, target = <slot>}`. Both are passed
+ * through verbatim because their meaning is not established; `target` may be omitted, which
+ * writes the unset reference. See toggle_auth.h for the decoded layout.
+ */
+[[nodiscard]] int slot_set_toggle(lua_State* state) {
+    namespace toggle = middleware::bap::activity_message::toggle_auth;
+    const auto* const handle =
+        static_cast<const SlotHandle*>(luaL_checkudata(state, 1, kSlotMetatable));
+    static constexpr std::array<std::string_view, 2> kDeclared{"state", "target"};
+    refuse_unknown_arguments(state, kDeclared);
+    SlotDefinition sensor{};
+    if (!current_slot(state, *handle, sensor) || !exact_toggle_slot(sensor)) {
+        return luaL_error(state, "activity slot is not an exact type-32 toggle sensor");
+    }
+    const lua_Integer value = optional_integer_argument(state, "state", 1);
+    if (value < toggle::kMinimumState || value > toggle::kMaximumState) {
+        return luaL_error(state, "toggle state must be -1..2");
+    }
+    toggle::Request request{};
+    request.state = static_cast<std::int32_t>(value);
+    SlotHandle target{};
+    if (optional_argument(state, "target", kSlotMetatable, target)) {
+        SlotDefinition definition{};
+        if (!current_slot(state, target, definition) || definition.registryKey == 0
+            || definition.slotIndex > std::numeric_limits<std::uint16_t>::max()) {
+            return luaL_error(state, "toggle target is not a live slot");
+        }
+        request.targetRegistryKey = definition.registryKey;
+        request.targetSlotType = definition.slotType;
+        request.targetSlotIndex = static_cast<std::uint16_t>(definition.slotIndex);
+    }
+    std::array<std::byte, toggle::kByteCount> body{};
+    if (!toggle::encode(request, body)) {
+        return luaL_error(state, "toggle encoder failed");
+    }
+    return queue_slot_auth(state, sensor, toggle::kSchema, toggle::kBitCount, body);
 }
 
 /**
@@ -1608,6 +1657,8 @@ constexpr std::int8_t kFilterModeInside = 1;
         lua_pushcfunction(state, &slot_set_public_event_state);
     } else if (key == "assign_combat_objective") {
         lua_pushcfunction(state, &slot_assign_combat_objective);
+    } else if (key == "set_toggle") {
+        lua_pushcfunction(state, &slot_set_toggle);
     } else if (key == "set_hop_on") {
         lua_pushcfunction(state, &slot_set_hop_on);
     } else if (key == "play_actor_program") {

@@ -277,6 +277,8 @@ void observe_player_life(RuntimeInstance& instance,
                          const host::SenseObservationSnapshot& sense) noexcept;
 
 /** Raises one event per watched trigger volume whose occupancy changed. */
+void push_hop_on_probe(RuntimeInstance& instance,
+                       const host::SenseObservationSnapshot& sense) noexcept;
 void push_trigger_edges(RuntimeInstance& instance,
                         const host::SenseObservationSnapshot& sense) noexcept;
 /** Raises one dedicated type-31 edge from a decoded schema-0x8080879F msg-19 payload. */

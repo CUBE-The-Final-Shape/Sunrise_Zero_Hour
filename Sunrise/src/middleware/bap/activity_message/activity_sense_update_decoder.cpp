@@ -730,6 +730,18 @@ decode_body(std::uint32_t schema, Reader& reader, Values& values) noexcept {
         return decode_object(reader, values);
     case kCombatant:
         return decode_combatant(reader, values);
+    case 0x8080954AU: {
+        // Type-26 hop-on Sense (reflected class 0x8080954A): three signed 32-bit values stored
+        // at the middle of the unsigned range, then one boolean. Every field is mandatory.
+        constexpr std::uint32_t kHopOnSense = 0x8080954AU;
+        constexpr auto kMinimum = (std::numeric_limits<std::int32_t>::min)();
+        return read_signed(reader, values, kHopOnSense, 0, 32, 32, kMinimum, false)
+                       && read_signed(reader, values, kHopOnSense, 1, 32, 32, kMinimum, false)
+                       && read_signed(reader, values, kHopOnSense, 2, 32, 32, kMinimum, false)
+                       && read_bool(reader, values, kHopOnSense, 3, false)
+                   ? NativeStatus::complete
+                   : NativeStatus::malformed;
+    }
     default:
         return NativeStatus::unsupported;
     }

@@ -630,6 +630,7 @@ lua_vm::CallStatus dispatch_event(RuntimeInstance& instance,
             observe_player_life(instance, *sense);
             publish_fireteam_life(now);
         }
+        push_hop_on_probe(instance, *sense);
         push_trigger_edges(instance, *sense);
         push_ghost_edges(instance, *sense);
         push_object_interaction_edges(instance, *sense);

@@ -10,6 +10,8 @@
 #include "../../middleware/bap/activity_message/scene_events_auth.h"
 #include "../../middleware/bap/activity_message/sensor_auth_update.h"
 #include "../../middleware/bap/activity_message/squad_objective_auth.h"
+#include "../../middleware/bap/activity_message/hop_on_auth.h"
+#include "../../middleware/bap/activity_message/toggle_auth.h"
 #include "../../middleware/content/packages/tables/region_reader.h"
 #include "../../state/activity/runtime.h"
 #include "activity_sdk_device_internal.h"
@@ -475,7 +477,17 @@ prepare_slot(const sdk::BoundView& view, std::uint32_t slotRow, PreparedDevice& 
                  message::ghost_link::kAuthSchema)
         || typed(
             format::kSquadSlotType, format::kSquadComponentClass, message::squad_objective::kSchema)
-        || typed(auth::kType2SlotType, auth::kType2ComponentClass, auth::kType2Schema);
+        || typed(auth::kType2SlotType, auth::kType2ComponentClass, auth::kType2Schema)
+        // Type-26 hop-on and type-32 toggle bodies: layouts decoded from the client's reflection
+        // database and checked against the slot metadata's declared widths (HOP-ON-SENSORS.md).
+        // Without these two entries every such body was refused here as invalid_body, before
+        // transmission, while the script still saw its own queuing succeed.
+        || typed(message::hop_on_auth::kSlotType,
+                 message::hop_on_auth::kComponentClass,
+                 message::hop_on_auth::kSchema)
+        || typed(message::toggle_auth::kSlotType,
+                 message::toggle_auth::kComponentClass,
+                 message::toggle_auth::kSchema);
     const bool occupancy = slotType == format::kOccupancySlotType
                            && authSchema == format::kOccupancyAuthSchema
                            && bitCount == kOccupancyAuthBits && body.size() == kOccupancyAuthBytes;

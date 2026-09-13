@@ -197,8 +197,9 @@ mission restart. Dev-mode sandbox relaxations still active.
   hallway but does from `pt_mount_ship` (a pod crashes down with its three Legionaries).
   `place{ spawn_rule = <type-66 sr_* slot>, spawn_lane = 1 }` (wire field .11) **selects that
   spawn rule**: `sq_hangar_fodder_b` placed with `sr_caball_hangar_fodder` arrived in a crashing
-  pod. **Never put a point set (type 48) in .12 (`spawn_lane = 2`)**: it stalls the client's
-  main loop, like the action-program targets.
+  pod. **Never send .12 (`spawn_lane = 2`) live**: a point set (type 48) and a nav point
+  (type 47, `slot_0077`) both stalled the client's main loop, like the action-program
+  targets -- the reference kind is not the issue; read the native consumer first.
   The Legionary jetpack arrival from behind the command ship at `pt_escape_explosion_a` (three
   `sq_hangar_fodder_a/b/c`) is **parked, unexplained**: none of the 14 actor states is a jump
   (2/4/6/8/10/12/14 resume combat, 3/5/7/13 are poses, 11 is a console interaction, 9 the
@@ -206,9 +207,22 @@ mission restart. Dev-mode sandbox relaxations still active.
   hangar spawn rule tried live on `sq_hangar_fodder_a` at that spot did nothing —
   `sr_phalanx`, `sr_ceiling_spawn_melee`, `sr_ceiling_spawn_rear`,
   `sr_military_hallway_destruction` (no spawn, existing Cabal unaffected) — except
-  `sr_caball_hangar_fodder` (crashing pod). Remaining leads: a rule/point set owned by another
-  object (the ship?), or the .12 point-set path once the freeze is understood. For now the
-  three fodder are placed at their anchors on entering explosion A.
+  `sr_caball_hangar_fodder` (crashing pod). Established since: every hangar squad's
+  `spawn_rule_config == spawner_config` (own inline point set) except `sq_hangar_a_b`
+  (`0x80B501CC` = `sr_caball_hangar_a_b`) and `sq_military_hallway_destruction`
+  (`0x80B501D5`); the generated SDK Lua publishes both tags per squad. The fodder spawner
+  config is byte-identical to `sq_hangar_a_a_flank`'s (only the name differs), so the package
+  carries no jetpack arrival. The six hangar rules are tags `0x80B501B6` (ceiling_melee),
+  `B501BA` (ceiling_rear), `B501C4` (phalanx), `B501CC` (a_b pod), `B501D2` (fodder pod,
+  point at (124.7, 83.6, -10.4)), `B501D5` (hallway); each rule has one point row (class
+  `0x80809840`, identity u64 first) -- the ceiling/phalanx identities exist in no placement
+  table anywhere (dead rules), the two pods resolve in `world.authored_placements`
+  (`identifier` is a decimal string). So the shipped jetpack arrival must come from a
+  server-sent spawn origin (.12) different from the anchor, with the Legionary AI jump-jetting
+  to its points. Actor states re-swept on a fresh actor (creation action = the state, then
+  the same state re-sent once): 2/4/6/8/12/14 are poses too, 10 is alert-then-combat -- an
+  action on a live actor often needs a second send to take. For now the three fodder are
+  placed at their anchors on entering explosion A.
 - leaving `pt_hangar_spawn_pod` (228): open the first door, place `sq_hangar_overlook_b_b`.
 - `pt_amanda_skip` (219): on entry instantiate the command ship (`cabal_destroyer`, hangar copy
   `slot/80b5036a/000000/0000/0004`) together with the ten `dogfight_*` objects and the escort
@@ -229,8 +243,54 @@ mission restart. Dev-mode sandbox relaxations still active.
 - Squads/objects whose names are shared by several objects (`sc_explosion_a`, `cabal_destroyer`,
   `o_cabal_carrier_r`) must be addressed by their full SDK slot id / symbol id.
 
+## Session 2026-09-13: combat objectives, task groups, hangar timing, RE of the Auth bodies
+
+Full RE detail is in [RE-ACTOR-PROGRAMS.md](RE-ACTOR-PROGRAMS.md); the tool is
+`tools/reflect_dump.py` (decodes the client's reflection registry from the dump file).
+
+- **Cabal move now.** `slot:assign_combat_objective{objective=, revision=, task_group=}` on the
+  squad slot, sent **before** `place`, is what gives a squad its AI (without it every Cabal
+  stands still — the "no pathfinding" observation). Rules established live: an assignment sent
+  to a living squad is ignored unless it changes the group **at the same revision**; the
+  revision must be new on every mission run (the client keeps the last one per squad across
+  mission restarts in one process) — `common.lua` derives one per run from `clock_ms`.
+- Task groups are the objective's combat areas + tactics. `obj_hangar`
+  (`slot/80b5036a/000001/0001/0003`) on a fodder: 12/13/16 hold `fa_fodder` (explosion A) with
+  jetpack hops, 14 explosion B, 15 the overlook above B, 0/1/2/7/8/9/11 the overlooks via the
+  stairs, 3/4/5/17-20 leave the area (despawn). `squad_state.task_costs` (from the client,
+  group+1 -> cost, 2040 = unreachable) arrives piecemeal and jumps between events; the script
+  waits 1 s, picks the cheapest reachable group once, then keeps it unless it disappears.
+  Every hangar squad is placed with `HANGAR_AI = { objective = obj_hangar }`.
+- The fodder "jetpack arrival" is that AI: a group-13 Legionary far from the player jets toward
+  him. Still not reproduced as shipped (see the RE file: `.12` with a rule is accepted but
+  inert; the action target is a type-58 path marker; the 10 actor-program kinds are decoded but
+  the kind<->class table is only built at runtime).
+- Hangar script changes: Cue 34 + music 8 on entering the unnamed volume `0xD3847A1F/60/5`
+  (just past the second door); `o_cabal_missile_1..6` (hangar copies, slots 0x30-0x35, type-4
+  objects that fly in and strike on instantiation) staggered by timers at `pt_amanda_skip`;
+  `sq_hangar_a_a` + `sq_hangar_a_b_sniper` 4 s after entering `pt_holliday` (the stairwell,
+  x 111-164 / y 94.7-100.7); the `sq_hangar_a_b` pod 3 s after leaving explosion A;
+  `pt_hangar_combat` no longer watched. `common.lua` was lost once to a bad edit and rebuilt by
+  replaying the edit history from the transcripts — a copy lives in
+  `scripts/mission_towerfall_backup/common.lua.bak_ai`.
+- Squad facts: the three fodder are plain Legionaries (14 states of group `afb11a12`, spawner
+  config byte-identical to `sq_hangar_a_a_flank` except name/anchor/`fnv1(name)` at +0x8f8);
+  no authored placement exists behind the ship except the `a_b` pod point; no type-58 path in
+  the hangar; the hangar fake fight (`sq_red_guard_fake_fight_a/b/c` on the balcony at z 0,
+  `sq_frame_cover_a/b/c` + scenes, `sq_frame_throw_a`/`sq_red_guard_throw_a`) and the friendly
+  frames (`sq_friendlies_early`, `_upper`) are still unused.
+- Community script in `C:/Users/brand/Downloads/mission_towerfall` (AI-written, untested by
+  its author): its only useful idea was `assign_combat_objective` + the cost loop; its music
+  and cues are placeholders.
+
 ## Leads for the next session
 
+0. Finish the actor-program kinds: map the 10 vtables to their classes (constructor xrefs from
+   the class descriptors) and read the runtime kind table (read-only from our DLL); a
+   `{ClientRef, u8}` kind (`80807f77`/`80807f7f`) is the best candidate for "go to point";
+   the "couldn't find firing point" string sits beside the vtables (`fa_fodder` is a type-44
+   firing area). Then wire Underwatch squads to their objectives (`obj_cabal_first_contact`,
+   `obj_centurion_intro`, `obj_post_gun`).
 1. Next beats after "Find Zavala": `scene_shaxx` (slot 14, `pt_start_shaxx_scene` /
    `pt_player_near_shaxx`, doors `o_shaxx_door_*`, `seq_vig_shaxx_brawl_lp`), the civilian scenes
    (`sc_civilian_*`), `sc_hero_moment_underwatch`. Same method: gate graph via `resource+0xC0`,

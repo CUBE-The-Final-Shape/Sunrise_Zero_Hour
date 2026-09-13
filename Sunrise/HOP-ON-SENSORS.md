@@ -70,6 +70,31 @@ through from the script verbatim instead of being wrapped in invented names, so 
 swept live without rebuilding the DLL. Once the sweep identifies them, the API should grow named
 arguments and this file should say what they are.
 
+## Why this matters more than it looks (Homecoming's plaza, 2026-09-14)
+
+Zavala's actor class (`0x80BFA696`) declares **zero** actor states -- verified live against a
+control in the same run, where the Centurion and the Cabal Legionaries each declare fourteen.
+So the one recipe that drives every other combatant in this mission, creating the actor with a
+pose through `play_actor_action` on its type-2 cell, **cannot apply to him**: there is no state
+to send.
+
+That is visible in game. Driving `sc_zavala_bunker_shield_bunker` makes the scene spawn its own
+Zavala, who stands in a **T-pose for two to three seconds** before the scene places him -- an
+actor created with no state at all. The shipped mission shows no such thing, so its Zavala is
+already in a state when the scene reaches him, and `ho_zavala_looping_bunker_anim` is the only
+thing in the authored data that can put him there.
+
+The shield has the same shape of answer. `bubble_shield_1` can be instantiated (its type-34
+object filter has to be armed first, or the object does not appear at all -- see below), it
+lasts the shipped ~6 seconds, but it appears at its own authored spot, not where the scene's
+Zavala raises his, and it does not protect the player from the scene's salvo. The protecting
+shield belongs to the actor the scene drives, not to a free-standing object.
+
+Side finding, worth its own line: **an authored object whose type-34 filter designates nobody
+does not instantiate.** `bubble_shield_1` sent alone did nothing; the same send after
+`set_object_filter{players = true}` on `_object_filter_ho_bubble_shield` brought the bubble up.
+That likely explains other "accepted but invisible" objects.
+
 ## Files
 
 - `src/middleware/bap/activity_message/hop_on_auth.h` — constants, `Request`, `encode`.

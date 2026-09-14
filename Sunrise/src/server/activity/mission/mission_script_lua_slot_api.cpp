@@ -933,12 +933,20 @@ constexpr std::int8_t kFilterModeInside = 1;
     namespace hop_on = middleware::bap::activity_message::hop_on_auth;
     const auto* const handle =
         static_cast<const SlotHandle*>(luaL_checkudata(state, 1, kSlotMetatable));
-    static constexpr std::array<std::string_view, 4> kDeclared{
-        "first", "second", "values", "target"};
+    static constexpr std::array<std::string_view, 5> kDeclared{
+        "first", "second", "values", "target", "acknowledge_stall_risk"};
     refuse_unknown_arguments(state, kDeclared);
     SlotDefinition sensor{};
     if (!current_slot(state, *handle, sensor) || !exact_hop_on_slot(sensor)) {
         return luaL_error(state, "activity slot is not an exact type-26 hop-on sensor");
+    }
+    // The first hop-on that actually reached the client (default flags, zero values, a type-1
+    // squad target) stalled its main loop. No delivered form is known to be safe yet, so a send
+    // has to be a deliberate experiment, never a script default.
+    if (!optional_boolean_argument(state, "acknowledge_stall_risk", false)) {
+        return luaL_error(state,
+                          "set_hop_on stalled the client when first delivered; pass "
+                          "acknowledge_stall_risk = true to send one deliberately");
     }
     hop_on::Request request{};
     request.first = optional_boolean_argument(state, "first", true);

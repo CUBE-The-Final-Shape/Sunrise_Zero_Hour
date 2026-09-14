@@ -1,5 +1,22 @@
 # Type-26 hop-on sensors (`slot:set_hop_on`)
 
+## First delivered send: the client stalled (2026-09-14)
+
+With the allowlist fixed, the first hop-on that actually reached the client --
+`ho_zavala_looping_bunker_anim`, `first = true`, `second = false`, all four values 0,
+`target = sq_zavala` (a type-1 squad) -- was transmitted (`outcome=transport_staged`, no refusal)
+and **froze the game**. The length cannot be the cause (it matches the slot metadata), so some
+field is being read as something it is not. Two candidates, in order:
+
+1. **The reference type.** The actor-program handlers accepted only two slot types for their
+   ClientRef and turned any other into a `0xFFFFFFFF` handle used as a table index -- a stall.
+   A hop-on applied to a type-1 squad reference is the same shape of mistake.
+2. **A value used as an index.** Logical 0 goes out as `0x80000000` under the assumed bias; if one
+   of the four integers is a handle or index, that alone is a garbage lookup.
+
+Until the native consumer of `0x8080954B` is read, `set_hop_on` refuses to send unless the call
+passes `acknowledge_stall_risk = true`: every send costs a game restart if wrong.
+
 ## Correction (2026-09-14): the live sends never left the server
 
 Everything this file said about hop-ons being "accepted without a stall and without an observable

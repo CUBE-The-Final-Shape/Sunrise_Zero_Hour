@@ -1,5 +1,27 @@
 # Type-26 hop-on sensors (`slot:set_hop_on`)
 
+## Selecting Zavala: what was tried and ruled out (2026-09-14)
+
+All through `set_mission_effect` on `ho_zavala_looping_bunker_anim`, a new revision per send, each
+send delivered (`transport_staged`), none refused, none stalling the client, and none producing
+any visible change on Zavala:
+
+- `of_filter_zavala` with `inside_any = {the volume around his anchor}`;
+- `ref_predicate` A, B, D and unregistered with `ref_target = sq_zavala` (type-1 squad), mode 0,
+  including a controlled detach / re-attach on A;
+- `ref_predicate` A, B, C, D and unregistered with `ref_target = sq_zavala__banshee` (type-2
+  cell), in mode 0 and again in mode 1.
+
+A squad or a cell inside a filter predicate is safe: only a squad placed directly in the effect
+body stalled the client. The two Zavala animation effects attached to the **player** through a
+players filter (bunker loop, then angry emotion, 12 s each) changed nothing visible on the player
+either, so they probably only apply to Zavala's actor class.
+
+Still open, in order: attaching the effects through `of_filter_zavala` **never armed by the script**
+(every test above rewrote the designers' predicates -- this needs a fresh game process), the
+battle-state dependencies (`sc_zavala_combat` progressed key by key, `tg_plaza_battle` with a
+target, other engagement flags), and instrumenting the client's type-26/type-34 apply path.
+
 ## Correction (2026-09-14, later): hop-ons are the upstream "mission effect", and the reference is the filter
 
 The body this file decodes is not new: `mission_effect_auth.h` (upstream 1AU work, commit

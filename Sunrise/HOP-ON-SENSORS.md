@@ -1,5 +1,42 @@
 # Type-26 hop-on sensors (`slot:set_hop_on`)
 
+## Correction (2026-09-14, later): hop-ons are the upstream "mission effect", and the reference is the filter
+
+The body this file decodes is not new: `mission_effect_auth.h` (upstream 1AU work, commit
+`2fdf2dc`) already encodes the same class `0x8080954B`, with its semantics, and
+`slot:set_mission_effect{filter =, enabled =, revision =}` has been on the `validate_auth`
+allowlist all along:
+
+- the second boolean is **disabled**;
+- the fourth signed value is a **revision**, positive, and a new revision re-attaches the effect;
+- the ClientRef is **the hop-on's type-34 object filter**, not the entity the effect lands on --
+  the client attaches the authored effect to whatever that filter selects;
+- the trailing `0x22` field is an **inline predicate list** of the same type the type-34 filter
+  body uses (its maximum, 91 bits, is exactly `kType34PredicateMaximumBitCount`); the upstream
+  encoder writes it empty and references the filter slot instead.
+
+So every `set_hop_on` experiment above sent revision 0 and pointed the reference at a squad, a
+cell or an object instead of a filter, and the type-1 squad was what stalled the client. The
+earlier conclusion that "the payload is the trailing dynamic field" is withdrawn: the payload is
+the filter reference plus a revision. `set_hop_on` duplicates `set_mission_effect` with the wrong
+field meanings and is to be removed.
+
+**Validated live.** `_object_filter_ho_bubble_shield` armed on players, then
+`ho_bubble_shield:set_mission_effect{filter = that filter, revision = 1}` gave the player a
+body-hugging shield and a near-invulnerability buff; `set_mission_effect{enabled = false,
+revision = 2}` removed both. Attaching `ho_zavala_looping_bunker_anim` through `of_filter_zavala`
+armed with `inside_any = {the volume around Zavala}` changed nothing on Zavala: volume predicates
+do not appear to select a combatant.
+
+**What selects an actor.** The type-34 filter has thirteen predicate classes
+(`0x80809571..0x8080957D`, all children of `0x8080957E`). Five carry a reference, and four of those
+share one layout -- a 2-bit mode and a ClientRef -- differing only by class identity: `SlotRefA`,
+`SlotRefB`, `SlotRefD` and the unregistered one were never used by the Lua verb, which only emits
+`FlagSlotRef` (players, volumes) and `SlotRefC` (a type-4 object). `set_object_filter` now takes
+`ref_predicate = "a" | "b" | "c" | "d" | "unregistered"`, `ref_target = <slot>` and `ref_mode` so
+the one that matches a squad or a combatant can be found live. A 9 720-name FNV-1/FNV-1a dictionary
+did not recover any of their class names.
+
 ## First delivered send: the client stalled (2026-09-14)
 
 With the allowlist fixed, the first hop-on that actually reached the client --

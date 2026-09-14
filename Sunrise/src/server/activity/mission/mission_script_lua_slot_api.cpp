@@ -424,8 +424,8 @@ constexpr std::int8_t kFilterModeInside = 1;
     namespace auth = scriptable_auth;
     const auto* const handle =
         static_cast<const SlotHandle*>(luaL_checkudata(state, 1, kSlotMetatable));
-    static constexpr std::array<std::string_view, 4> kDeclared{
-        "players", "target", "inside", "inside_any"};
+    static constexpr std::array<std::string_view, 7> kDeclared{
+        "players", "target", "inside", "inside_any", "ref_predicate", "ref_target", "ref_mode"};
     refuse_unknown_arguments(state, kDeclared);
     SlotDefinition slot{};
     if (!current_slot(state, *handle, slot) || slot.slotType != auth::kType34SlotType
@@ -478,6 +478,44 @@ constexpr std::int8_t kFilterModeInside = 1;
     if (inside.slotIndex >= 0) {
         body.predicates[body.count++] =
             auth::Type34ModeFlagSlotRef{kFilterModeInside, false, inside};
+    }
+    // Development: the four reference-carrying predicate classes the verb never used (A, B, D
+    // and the unregistered one) share C's layout -- a mode and a ClientRef -- and differ only by
+    // class identity, which is what selects the kind of entity they match. Exposed raw so the one
+    // that selects a squad or a combatant can be found live. `ref_predicate` = "a", "b", "c",
+    // "d" or "unregistered"; `ref_target` = any live slot; `ref_mode` = 0 (direct, default) or 1.
+    lua_getfield(state, 2, "ref_predicate");
+    const bool hasRefPredicate = lua_type(state, -1) == LUA_TSTRING;
+    std::string_view refPredicate = hasRefPredicate ? std::string_view(lua_tostring(state, -1)) : "";
+    lua_pop(state, 1);
+    if (hasRefPredicate) {
+        SlotHandle refHandle{};
+        SlotDefinition refSlot{};
+        if (!optional_argument(state, "ref_target", kSlotMetatable, refHandle)
+            || !current_slot(state, refHandle, refSlot) || refSlot.registryKey == 0) {
+            return luaL_error(state, "ref_predicate needs a live ref_target slot");
+        }
+        const lua_Integer refMode = optional_integer_argument(state, "ref_mode", kFilterModeDirect);
+        if ((refMode != 0 && refMode != 1) || body.count >= auth::kType34PredicateCapacity) {
+            return luaL_error(state, "ref_mode must be 0 or 1, and the filter must have room");
+        }
+        const auth::Type2LaneClientRef reference{refSlot.registryKey,
+                                                 static_cast<std::int8_t>(refSlot.slotType),
+                                                 static_cast<std::int16_t>(refSlot.slotIndex)};
+        const auto mode = static_cast<std::int8_t>(refMode);
+        if (refPredicate == "a") {
+            body.predicates[body.count++] = auth::Type34ModeSlotRefA{mode, reference};
+        } else if (refPredicate == "b") {
+            body.predicates[body.count++] = auth::Type34ModeSlotRefB{mode, reference};
+        } else if (refPredicate == "c") {
+            body.predicates[body.count++] = auth::Type34ModeSlotRefC{mode, reference};
+        } else if (refPredicate == "d") {
+            body.predicates[body.count++] = auth::Type34ModeSlotRefD{mode, reference};
+        } else if (refPredicate == "unregistered") {
+            body.predicates[body.count++] = auth::Type34UnregisteredModeSlotRef{mode, reference};
+        } else {
+            return luaL_error(state, "ref_predicate must be a, b, c, d or unregistered");
+        }
     }
     std::array<std::byte, auth::kType34MaximumByteCount> bytes{};
     std::size_t written = 0;

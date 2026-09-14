@@ -1,5 +1,33 @@
 # Type-26 hop-on sensors (`slot:set_hop_on`)
 
+## Client probe: what a filter actually selects (2026-09-14, night)
+
+`src/client/hooks/mission_effect_probe` hooks the mission-effect component (class `0x8080953F`)
+read-only. The Auth body (112 bytes) is copied to component `+0x180` and a dirty flag set; the tick
+calls *process*, which detaches, and unless `disabled` calls *attach_all*: resolve the filter
+ClientRef at `+0x194`, walk what it selects, call *attach_one(component, entity)* for each (returns
+1 when attached; 0 for an unsupported entity, an effect already present, or a failed allocation).
+An attached effect is re-checked twice a second. Each process logs
+`ev=probe stage=mission_effect at=process ... selected= attached= entities=[handle:ret]`.
+
+Measured in one fresh process with `sq_zavala` placed:
+
+| filter | selected | attached |
+|---|---|---|
+| `of_filter_zavala` as authored (never written) | nothing | - |
+| players (bubble control) | player `51FAA000` | yes |
+| `ref_predicate = "a"`, `sq_zavala` | `00000001` (not an entity) | no |
+| **`ref_predicate = "b"`, `sq_zavala`** | **Zavala `71FAA304`** | **yes** |
+| `ref_predicate = "c"`, `sq_zavala` | Zavala (effect already there) | no |
+| `ref_predicate = "d"`, any target | the local player | yes |
+| `"unregistered"`, `sq_zavala`; every predicate on `sq_zavala__banshee` except d | nothing | - |
+
+**Predicate B on a squad selects its members.** Confirmed visually: `ho_bubble_shield` through
+predicate B on `sq_zavala` put the red body-hugging effect on Zavala. `ho_zavala_looping_bunker_anim`
+attaches to him the same way and stays attached, yet shows nothing on its own -- so the missing
+piece for the bunker loop is no longer selection. Every earlier "no visible change" with predicate
+B was an attached effect, not a missed one.
+
 ## Selecting Zavala: what was tried and ruled out (2026-09-14)
 
 All through `set_mission_effect` on `ho_zavala_looping_bunker_anim`, a new revision per send, each

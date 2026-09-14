@@ -264,6 +264,7 @@
     <ClCompile Include="src\client\hooks\bitmap\bitmap_hook_lifecycle.cpp" />
     <ClCompile Include="src\client\hooks\feature_flags\feature_flags.cpp" />
     <ClCompile Include="src\client\hooks\cine_auth_probe\cine_auth_probe.cpp" />
+    <ClCompile Include="src\client\hooks\mission_effect_probe\mission_effect_probe.cpp" />
     <ClCompile Include="src\client\hooks\cine_probe\cine_probe.cpp" />
     <ClCompile Include="src\client\hooks\membership_probe\membership_probe.cpp" />
     <ClCompile Include="src\client\hooks\net_tick_probe\net_tick_probe.cpp" />
@@ -1807,6 +1808,7 @@
     <ClInclude Include="src\client\hooks\bitmap\bitmap_hook_lifecycle.h" />
     <ClInclude Include="src\client\hooks\feature_flags\feature_flags.h" />
     <ClInclude Include="src\client\hooks\cine_auth_probe\cine_auth_probe.h" />
+    <ClInclude Include="src\client\hooks\mission_effect_probe\mission_effect_probe.h" />
     <ClInclude Include="src\client\hooks\cine_probe\cine_probe.h" />
     <ClInclude Include="src\client\hooks\membership_probe\membership_probe.h" />
     <ClInclude Include="src\client\hooks\net_tick_probe\net_tick_probe.h" />

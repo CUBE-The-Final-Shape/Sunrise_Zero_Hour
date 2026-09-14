@@ -304,6 +304,25 @@ Full RE detail is in [RE-ACTOR-PROGRAMS.md](RE-ACTOR-PROGRAMS.md); the tool is
   its author): its only useful idea was `assign_combat_objective` + the cost loop; its music
   and cues are placeholders.
 
+## Session 2026-09-14: plaza, Zavala takes cover
+
+- **`sc_zavala` follows the Centurion rule.** A `sq_zavala` placed with a combat objective turns
+  and shoots but never moves, and `sc_zavala` ignores him (tried on `obj_plaza_init` and
+  `obj_plaza_kill_cabal`, with its cast, and with plaza engagement flags / `tg_plaza_battle`).
+  Working, observed live: `retire_squad("sq_zavala")` → 2 s → pose `0x40FC40DA` (group
+  `0xAFB11A12`, double send) on his type-2 cell `sq_zavala__banshee` (index 7), plus
+  `squad_kill_cabal_5..8` placed without objective → 3 s → `sc_zavala`
+  (`slot/80b50746/000002/0002/002b`) bind → activate → its 10 keys (`385838EC C021F76C B8C5C0A5
+  1BED1ED3 342380CB B0A69403 2DD14D67 5C569FF8 8751DF51 397A672B`). Zavala vanished, reappeared,
+  moved to the wall and took cover. Zavala's actor states are the same generic 14 as the
+  Centurion's. Not yet isolated: whether the kill_cabal cast is needed, and whether the bunker
+  mission effect (attached to the retired entity beforehand) played any part.
+- **Mission effects are selected through filter predicate B.** New read-only client hook
+  `src/client/hooks/mission_effect_probe` logs what each type-26 body selects and attaches; see
+  [HOP-ON-SENSORS.md](HOP-ON-SENSORS.md). Predicate B on a squad selects its members, D is the
+  local player, the authored `of_filter_zavala` selects nothing. Its log cap (400 lines) is reached
+  in a few minutes because attached effects are re-checked twice a second.
+
 ## Leads for the next session
 
 0. **Moving a combatant to a point is still unsolved, and the cheap options are exhausted.**

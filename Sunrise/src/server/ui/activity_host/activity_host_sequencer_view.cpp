@@ -66,6 +66,7 @@ struct Step final {
     std::uint32_t hashB{};   // pose action
     std::vector<std::uint32_t> keys{};   // explicit scene keys
     std::vector<std::string> squads{};   // clear step squads
+    std::array<int, 4> progress{};       // directive lane values (counter = first two)
 };
 
 struct Sequence final {
@@ -282,6 +283,21 @@ std::string serialize(const Document& document) {
                 write_uint(out, step.hashA);
                 field("label");
                 write_escaped(out, step.text);
+                if (step.flagA) {
+                    field("raw");
+                    out += "true";
+                }
+                if (step.progress != std::array<int, 4>{}) {
+                    field("progress");
+                    out.push_back('[');
+                    for (std::size_t k = 0; k < step.progress.size(); ++k) {
+                        if (k != 0) {
+                            out += ", ";
+                        }
+                        out += std::to_string(step.progress[k]);
+                    }
+                    out.push_back(']');
+                }
             } else if (kind == "sequence") {
                 field("name");
                 write_escaped(out, step.target);
@@ -599,6 +615,12 @@ bool deserialize(std::string_view text, Document& document, std::string& error) 
                 } else if (kind == "directive") {
                     step.hashA = static_cast<std::uint32_t>(item.num("hash"));
                     step.text = item.str("label");
+                    step.flagA = item.flag("raw", false);
+                    if (const Value* values = item.get("progress"); values != nullptr && values->type == Value::Type::array) {
+                        for (std::size_t k = 0; k < values->array.size() && k < step.progress.size(); ++k) {
+                            step.progress[k] = static_cast<int>(values->array[k].number);
+                        }
+                    }
                 } else if (kind == "sequence") {
                     step.target = item.str("name");
                 } else if (kind == "clear") {
@@ -1238,6 +1260,15 @@ void draw_step(Step& step, const Sequence& sequence) {
         ImGui::SameLine();
         ImGui::SetNextItemWidth(200.0F);
         if (input_string("label", step.text)) {
+            g_dirty = true;
+        }
+        ImGui::SameLine();
+        ImGui::SetNextItemWidth(160.0F);
+        if (ImGui::InputInt2("progress", step.progress.data())) {
+            g_dirty = true;
+        }
+        ImGui::SameLine();
+        if (ImGui::Checkbox("raw", &step.flagA)) {
             g_dirty = true;
         }
     } else if (kind == "sequence") {

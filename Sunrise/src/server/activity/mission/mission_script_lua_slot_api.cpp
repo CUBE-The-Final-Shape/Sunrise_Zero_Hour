@@ -282,8 +282,8 @@ constexpr std::size_t kOccupancyAuthByteCount = 11;
     const auto* const handle =
         static_cast<const SlotHandle*>(luaL_checkudata(state, 1, kSlotMetatable));
     // Named arguments this call accepts. Any other key is refused.
-    static constexpr std::array<std::string_view, 4> kDeclared{
-        "directive", "state", "navpoint", "audience"};
+    static constexpr std::array<std::string_view, 6> kDeclared{
+        "directive", "state", "navpoint", "audience", "progress", "raw"};
     refuse_unknown_arguments(state, kDeclared);
     SlotDefinition slot{};
     if (!current_slot(state, *handle, slot)) {
@@ -307,13 +307,25 @@ constexpr std::size_t kOccupancyAuthByteCount = 11;
     }
     Impl* const impl = impl_from_state(state);
     DirectiveElementDefinition resolved{};
-    if (impl == nullptr || impl->definitions.resolveDirectiveElement == nullptr
-        || !impl->definitions.resolveDirectiveElement(impl->definitions.context,
-                                                      static_cast<std::uint32_t>(slotRow),
-                                                      static_cast<std::uint32_t>(nameHash),
-                                                      static_cast<std::int32_t>(element),
-                                                      resolved)
-        || resolved.slotRow != slot.nativeRow) {
+    // `raw = true` skips the generated-SDK lookup: the SDK only lists elements with a title AND
+    // a description, which drops the progress-counter variants (Homecoming's 0x23716DE6, the
+    // "Defend the Tower" element that carries "Assault repelled x / 3"). The hash must still be
+    // one the package's type-68 directive table holds, since the client dereferences its
+    // definition without checking.
+    lua_getfield(state, 2, "raw");
+    const bool raw = lua_toboolean(state, -1) != 0;
+    lua_pop(state, 1);
+    if (raw) {
+        resolved.slotRow = slot.nativeRow;
+        resolved.nameHash = static_cast<std::uint32_t>(nameHash);
+        resolved.elementIndex = static_cast<std::int32_t>(element);
+    } else if (impl == nullptr || impl->definitions.resolveDirectiveElement == nullptr
+               || !impl->definitions.resolveDirectiveElement(impl->definitions.context,
+                                                             static_cast<std::uint32_t>(slotRow),
+                                                             static_cast<std::uint32_t>(nameHash),
+                                                             static_cast<std::int32_t>(element),
+                                                             resolved)
+               || resolved.slotRow != slot.nativeRow) {
         return luaL_error(state, "directive does not belong to this slot");
     }
     scriptable_auth::Type68Preset preset{.nameHash = resolved.nameHash,
@@ -325,6 +337,25 @@ constexpr std::size_t kOccupancyAuthByteCount = 11;
         return luaL_error(state,
                           "directive audience requires an authored type-70 engagement sensor");
     }
+    // `progress` = up to four signed 32-bit lane values; the HUD reads the first two as the
+    // element's counter when the authored element shows one (Defend the Tower: "x / 3").
+    lua_getfield(state, 2, "progress");
+    if (!lua_isnil(state, -1)) {
+        luaL_checktype(state, -1, LUA_TTABLE);
+        for (std::size_t index = 0; index < preset.progress.size(); ++index) {
+            lua_rawgeti(state, -1, static_cast<lua_Integer>(index + 1));
+            if (!lua_isnil(state, -1)) {
+                const lua_Integer value = luaL_checkinteger(state, -1);
+                if (value < (std::numeric_limits<std::int32_t>::min)()
+                    || value > (std::numeric_limits<std::int32_t>::max)()) {
+                    return luaL_error(state, "directive progress value is outside 32 bits");
+                }
+                preset.progress[index] = static_cast<std::int32_t>(value);
+            }
+            lua_pop(state, 1);
+        }
+    }
+    lua_pop(state, 1);
     if (!optional_slot_reference(
             state, "navpoint", scriptable_auth::kType47SlotType, preset.navpoint)) {
         return luaL_error(state, "directive navpoint requires a current authored type-47 slot");

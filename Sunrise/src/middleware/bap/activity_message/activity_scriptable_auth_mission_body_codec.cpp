@@ -68,15 +68,17 @@ constexpr std::uint8_t kDirectiveActiveIndexWidth = 3;
                                          std::uint32_t nameHash,
                                          std::int32_t elementIndex,
                                          std::int8_t state,
-                                         const Type2LaneClientRef& target = {}) noexcept {
+                                         const Type2LaneClientRef& target = {},
+                                         std::array<std::int32_t, 4> progress = {}) noexcept {
     if (!writer.write(nameHash, 32)
         || !writer.write(std::bit_cast<std::uint32_t>(elementIndex) + kSigned32Bias, 32)
         || !writer.write(static_cast<std::uint32_t>(state) + 1U, kDirectiveStateWidth)
         || !write_neutral_timed_state(writer)) {
         return false;
     }
-    for (std::size_t index = 0; index < 4; ++index) {
-        if (!writer.write(kSigned32Bias, 32)) {
+    // The four lane values (+0x48..+0x54): the element's progress counter when it declares one.
+    for (const std::int32_t value : progress) {
+        if (!writer.write(std::bit_cast<std::uint32_t>(value) + kSigned32Bias, 32)) {
             return false;
         }
     }
@@ -449,8 +451,8 @@ bool encode_type68(const Type68Preset& preset,
     for (std::size_t index = 0; encoded && index < kType68EntryCount; ++index) {
         encoded =
             index == 0 && preset.visible
-                ? write_directive_entry(
-                      writer, preset.nameHash, preset.elementIndex, preset.state, preset.navpoint)
+                ? write_directive_entry(writer, preset.nameHash, preset.elementIndex,
+                                        preset.state, preset.navpoint, preset.progress)
                 : write_directive_entry(writer, kClientRefAbsentKey, 0, -1);
     }
     encoded = encoded && writer.write(preset.visible ? 1U : 0U, kDirectiveActiveIndexWidth);

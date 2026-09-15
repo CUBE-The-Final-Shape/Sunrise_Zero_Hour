@@ -469,6 +469,12 @@ struct Type68Preset final {
     /** Native directive state: 0 enters, 1 completes, and 2 uses the alternate exit state. */
     std::int8_t state{};
     bool visible{true};
+    /**
+     * The lane's four signed 32-bit values (client lane +0x48..+0x54). When the authored element
+     * declares a progress display, the HUD entry takes the first two as its counter and the
+     * last two unconditionally (client 0x7ff741df8570); all zero shows nothing.
+     */
+    std::array<std::int32_t, 4> progress{};
     /** Authored type-47 destination; absent removes the explicit guidance marker. */
     Type2LaneClientRef navpoint{};
     /** Type-70 engagement sensor the client tests before it shows the mission banner. */

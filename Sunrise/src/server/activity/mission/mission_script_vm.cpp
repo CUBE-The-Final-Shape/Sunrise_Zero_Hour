@@ -1,9 +1,12 @@
 #include <algorithm>
+#include <array>
 #include <cstddef>
+#include <cstdio>
 #include <cstring>
 #include <limits>
 #include <new>
 
+#include "../../../core/logging/log.h"
 #include "mission_script_vm_internal.h"
 
 namespace sunrise::server::activity::mission::lua_vm {
@@ -701,6 +704,23 @@ bool snapshot_durable_state(const Vm& vm,
 }
 
 /** Probes a mission script source for its declared initial_state region without a full VM attach. */
+/** Names the Lua error that stopped the initial-state probe; silence reads as "not declared". */
+void probe_failure(lua_State* L, const char* stage) noexcept {
+    const char* const message = lua_tostring(L, -1);
+    std::array<char, 256> line{};
+    const int written = std::snprintf(line.data(),
+                                      line.size(),
+                                      "ev=mission_script stage=initial_state_probe result=%s_error "
+                                      "detail=%.160s",
+                                      stage,
+                                      message == nullptr ? "(none)" : message);
+    if (written > 0) {
+        core::log::write(core::log::Channel::server,
+                         core::log::Level::warn,
+                         {line.data(), static_cast<std::size_t>(written)});
+    }
+}
+
 std::int32_t probe_initial_state_region(std::span<const char> source,
                                         std::string_view sdkLuaSearchPath) noexcept {
     if (source.empty()) {
@@ -716,6 +736,14 @@ std::int32_t probe_initial_state_region(std::span<const char> source,
     lua_pop(L, 1);
     luaL_requiref(L, LUA_LOADLIBNAME, luaopen_package, 1);
     lua_pop(L, 1);
+    // The probe executes the controller's top level, which pulls in its modules: a controller
+    // split across `require`d files loads json/format helpers there, so the same base libraries
+    // the sandbox grants must be present or the whole chunk fails and the declaration reads as
+    // absent. This state is thrown away after one field is read.
+    luaL_requiref(L, LUA_STRLIBNAME, luaopen_string, 1);
+    lua_pop(L, 1);
+    luaL_requiref(L, LUA_MATHLIBNAME, luaopen_math, 1);
+    lua_pop(L, 1);
     if (!sdkLuaSearchPath.empty()) {
         lua_getglobal(L, "package");
         if (lua_istable(L, -1)) {
@@ -725,10 +753,12 @@ std::int32_t probe_initial_state_region(std::span<const char> source,
         lua_pop(L, 1);
     }
     if (luaL_loadbuffer(L, source.data(), source.size(), "mission_script_probe") != LUA_OK) {
+        probe_failure(L, "load");
         lua_close(L);
         return -1;
     }
     if (lua_pcall(L, 0, 1, 0) != LUA_OK) {
+        probe_failure(L, "run");
         lua_close(L);
         return -1;
     }

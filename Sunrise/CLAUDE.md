@@ -322,6 +322,264 @@ Full RE detail is in [RE-ACTOR-PROGRAMS.md](RE-ACTOR-PROGRAMS.md); the tool is
   [HOP-ON-SENSORS.md](HOP-ON-SENSORS.md). Predicate B on a squad selects its members, D is the
   local player, the authored `of_filter_zavala` selects nothing. Its log cap (400 lines) is reached
   in a few minutes because attached effects are re-checked twice a second.
+- **Participants of the Zavala scenes** (decoded from the dumped config blobs
+  `hashdump/hash_<config>.bin`: `{class, role_a, role_b, runtime registry 0x28A6B21F, idx<<16|type}`
+  entries after the scene's own `80806266` header; names looked up in registry `80b50746` only).
+  Zavala has the same role `EB5FA833/C6DDEEAA` in all four:
+  - `sc_zavala` (config `0x80B50629`): `sq_zavala`, `squad_kill_cabal_5..8`,
+    `ps_zavala_shooting_to_cover_align_point` + point sets 0x40/0x45/0x46/0x47/0x3A;
+  - `sc_zavala_combat` (`0x80B5062D`, graph `0x80C3DEB0`, 19 keys): `sq_zavala`,
+    `squad_kill_cabal_1/2`, `sq_plaza_reinforce_a_a/a_b`, the align point + 8 point sets;
+  - `sc_zavala_bunker_shield_bunker` (`0x80B50633`, graph `0x80BEB7A1`, keys `385838EC C021F76C
+    9DD22D40 2CBA081B EED6F6F4 A3BC3509 9D8642A9 E58D98B9 397A672B B057C3B6`): `sq_zavala`,
+    `o_missile_spawner` (type-4, index 46), the align point;
+  - `sc_zavala_shield_death` (`0x80B50639`): same three as the bunker shield scene.
+- With Zavala in cover (held by `sc_zavala`), all observed live, nothing changed him:
+  `sc_zavala_bunker_shield_bunker` spawns **its own duplicate Zavala** (Cayde policy) and plays
+  shield + missile rain on it (the scene bubble does not protect the player -- the player shield is
+  presumably `ho_bubble_shield` on players); `sc_zavala_combat` on generations 1-4, with and
+  without its four squads placed passive, only turned him at the very end;
+  `assign_combat_objective(obj_plaza_kill_cabal)` on the unplaced squad got no squad report back;
+  actor states 2, 3, 4, 5 and 9 on `sq_zavala__banshee` did nothing (probably because the scene
+  holds him -- the Centurion sweep was on a free actor); `sc_zavala` re-bound on generation 3 with
+  only its first key did nothing; and `retire_squad("sq_zavala")` followed by pose 1 on the cell
+  **neither removed the program-created Zavala nor created a second one**.
+- Next: a fresh mission run to get a free program-created Zavala (pose 1, no scene), then the 14
+  states on him, then `sc_zavala` key by key (cumulative sets on one generation), then find how to
+  release or remove a scene-held / program-created actor.
+
+### 2026-09-14 (day): `sc_zavala` replicated on a fresh run, then key by key
+
+- **Replicated on a fresh run without `retire_squad`** (`sq_zavala` is never placed by
+  `plaza.lua`, so there is nothing to retire): pose 1 (double send) on `sq_zavala__banshee` ->
+  3 s -> `squad_kill_cabal_5..8` via `spawn_squad_full(_, 1)` without objective -> 3 s ->
+  `sc_zavala` gen 1 bind -> activate -> 10 keys. Zavala and the Cabal behave as before.
+- **Key by key (cumulative sets on generation 1, step N = keys 1..N, each step observed):**
+  steps 1 and 2 (`385838EC`, `C021F76C`) nothing visible; **step 3 (`B8C5C0A5` added) plays
+  the animation and moves him to cover**; steps 4-10 add nothing visible with him already in
+  cover, and no `scene_finished` was logged. **Key 3 alone** (fresh run, bind -> activate ->
+  `{B8C5C0A5}`) also triggers the move to cover: keys 1-2 are not prerequisites, the gates are
+  independent. Keys 4-10 each sent **alone** on their own fresh generation (2..8), 3 s apart,
+  with Zavala already in cover: nothing visible at all. So within `sc_zavala` only key 3 has an
+  observable effect on him from the posed/cover state; the other nine are inert or need a state
+  we have not reached.
+- **`sc_zavala_combat` on a posed Zavala (fresh run, no `sc_zavala` first)**: cast
+  `squad_kill_cabal_1/2` + `sq_plaza_reinforce_a_a/a_b` placed passive, then gen 1 bind ->
+  activate -> key 2 (`B8C5C0A5`) alone: Zavala leaves his pose, goes to the wall and **shoots at
+  the Cabal area**. Then all 18 other keys, each alone on a fresh generation (2..19), 4 s apart:
+  **every one produces the same thing** (out of cover, to his position, aims at the Cabal, no
+  shot this time), and after the last one he stays aiming, never back in cover. So on this scene
+  a new generation restarts the graph's opening (move + aim) regardless of which key is in the
+  set: single-key-per-generation does not discriminate the keys here. Yesterday's "only turned
+  him at the very end" was a Zavala already held by `sc_zavala`; a scene claims him only while he
+  is free.
+- **Validated on the next run**: key 1 alone (`385838EC`) as the run's first generation gives the
+  same shooting behaviour (out of cover, shoot, back in cover, out again and two more shots, then
+  stands exposed and idle); key 2 alone on generation 2 then gives cover in/out/in with no shot.
+  So **shooting belongs to the first graph run on a free Zavala, not to any key**; later
+  generations only replay the cover cycle.
+- **Cumulative keys on ONE generation (1..19, 6 s apart, free posed Zavala + passive cast)**:
+  he comes out twice shooting at the Cabal, and once they are all dead he stays in cover and
+  does nothing (whereas the generation restarts above pulled him out with no target). Reading:
+  `sc_zavala_combat` is his whole battle loop (cover <-> shoot while living targets exist); its
+  keys did not produce distinct visible actions at 6 s spacing, so they are presumably progress
+  gates (waves). Follow-ups on that same run, all negative: `sq_plaza_reinforce_a_a/a_b`
+  re-placed WITH `obj_plaza_kill_cabal` (AI, group 0) -> no reaction; gen 2 with all 19 keys
+  -> out of cover and back, no shot; `squad_kill_cabal_1/2` re-placed passive + gen 3 with all
+  keys -> no movement at all. Working hypothesis (unconfirmed): the shots are the scene's own
+  first-run choreography on its `squad_kill_cabal_*` victims (hence the name), and the reinforce
+  squads are real AI; a scene restart does not replay it. Every conclusion about restarts is
+  muddied by the actor having been claimed 3 times in one run -- confirm on a fresh run.
+- **User observation that settles it:** when the scene makes him shoot, the shots go to fixed
+  spots of the scene (its authored point sets), not at the Cabal; the only time he ever aimed at
+  actual Cabal was under the combat objective (correct targeting, wrong animation, no movement).
+  So `sc_zavala_combat` = choreographed cover/shoot loop (first run only), `sc_zavala` key 3 =
+  move to cover. Neither is target-driven.
+- **Wiring attempt in `plaza.lua` (spawn: pose -> 3 s -> `sc_zavala` key 3; `pt_zavala_loop`:
+  shield; `pt_plaza_zavala_meet`: kill_cabal_1/2 + reinforce AI -> `sc_zavala_combat`)**: the
+  volumes are in that order (loop = `0xF8F959CD`/60/39 near the spawn, meet = `0x28A6B21F`/60/124,
+  both arm by name) and the shield is right (it fades by itself after ~6 s), but Zavala, once
+  held in cover by `sc_zavala`, **ignores `sc_zavala_combat` for good**: all 19 keys, key 1 alone
+  on gen 5, and a `sc_zavala` reset (gen 2, empty set, no activate) followed by combat key 1 on
+  gen 6 all did nothing. The footage shows him in cover behind the shield, then coming out to
+  shoot when the player arrives; the pose spot is not his cover spot. Next candidate: the bunker
+  loop hop-on (`ho_zavala_looping_bunker_anim`, predicate B on `sq_zavala`) on a free posed
+  Zavala instead of `sc_zavala`, then `sc_zavala_combat` from that state.
+- **Bunker loop on a free posed Zavala (fresh run, `sc_zavala` off)**: `of_filter_zavala`
+  (`slot/80b50746/000038/0038/0022`) armed with predicate B on `sq_zavala` selects the
+  program-created actor too (entity `4CFAA26C`, `selected=1 attached=1`, re-checked twice a
+  second with `attach_outside ret=0`), and `ho_zavala_looping_bunker_anim` rev 1 attaches --
+  **no visible change**: he stays in pose 1 at the cell spot. `sc_zavala_combat` then (gen 7;
+  its gen 1 had fired at `meet` before he existed) gave two cover exits without a shot, i.e. the
+  restart behaviour -- **but there was no living Cabal**. Same run, cast re-placed passive
+  (`kill_cabal_1/2` + `reinforce_a_a/a_b`) then combat key 1 on gen 8: **three exits, three
+  shots, then cover once the last Cabal died.** Rule: `sc_zavala_combat`'s loop fires only while
+  Cabal are alive; with none alive a restart gives the empty cover cycle and nothing else. The
+  "first run only" reading above is wrong (dead Cabal every time). Whether a `sc_zavala`-held
+  Zavala really ignores the combat scene is therefore unproven again (Cabal state unknown in
+  those runs): test the scripted flow without killing anything before `meet`.
+- **Confirmed with living Cabal: a `sc_zavala`-held Zavala ignores `sc_zavala_combat`** (scripted
+  flow, fresh cast at `meet`; and again later with him settled in cover, cast re-placed, gen 2).
+- **SOLVED — replace the actor with a new program generation.** `play_actor_action{generation=2,
+  revision=1..2, group, action=pose}` on `sq_zavala__banshee` while `sc_zavala` holds the
+  generation-1 actor: **the new Zavala replaces the old one** (the held one vanishes) and is
+  free; cast placed, then `sc_zavala_combat` gen 3 key 1 -> he takes cover and comes out twice
+  to shoot the living Cabal. In the ~7 s between the re-pose and the scene the fresh actor shot
+  at the Cabal on its own, so the script now re-poses right after placing the cast and starts
+  the scene 1 s later. Generalises the Centurion rule: each scene wants a *fresh, free* actor,
+  and the program generation is how the actor is renewed (`retire_squad` never removes a
+  program-created actor).
+- Scratch commands for this: `zv_cover.lua` (full recipe), `zv_setup.lua` (pose + cast, no
+  scene), `zvk_N.lua` (step N) in this session's scratchpad.
+
+## Session 2026-09-14 (afternoon): the plaza opening in `plaza.lua`, what is settled
+
+Reference (user's footage): Zavala is already in cover behind a fake shield when the player
+reaches the plaza; the shield fades (~6 s), the wave-1 Cabal land, Zavala leaves cover for a
+full salvo, returns, ~3 s later a second salvo, then stays in cover; once the player kills the
+rest, a dialogue closes wave 1.
+
+Settled live (each point one or more runs):
+- `sc_fake_shield` (`80b50616`/3, resource `0x80B826FB`, 1 key `385838EC`, point set
+  `ps_fake_shield`) is the shield; `bubble_shield_1` (the object) leaves an "Immune" collision
+  wall in front of him after it fades -- never use it.
+- `sc_zavala_combat` bind + **activate alone, no key**, on a free posed Zavala puts him in cover
+  and runs the loop: his exits are triggered by **living Cabal appearing** (the shipped two
+  salvos), the first exit coming ~3 s after the activate whether or not a key was published
+  (a key published later changes nothing; a new generation restarts the loop and, with Cabal
+  alive, turns it into shoot-until-dead with no return to cover). With no Cabal at activation
+  the first exit is wasted. `squad_kill_cabal_1/2` must stay **passive** on their points (the
+  salvos aim at fixed points; with the AI they walk off and the salvos go short/empty).
+- A Zavala held by `sc_zavala` never joins `sc_zavala_combat` (all keys, key 1, key 2 alone,
+  after a reset generation, with living Cabal) -- confirmed again. There is no scene
+  deactivation verb: `scene:activate` is a state-local override
+  (`request_state_local_authored_scene_override`) that nothing withdraws.
+- A new program generation on `sq_zavala__banshee` replaces the actor (the held one vanishes)
+  -- the only known "release"; visible unless hidden (the shield).
+- Placing a *participant* squad while the scene runs seemed to re-sync Zavala in some runs; not
+  isolated (also correlated with the shield/creation order).
+- The plaza volumes are crossed in 3-4 s at a run (on x: `pt_spire_trigger` 69 -> `pt_zavala_loop`
+  59 -> spire exit 41 -> `pt_defend` 36; `pt_plaza_zavala_meet` is further north, y 9-45), so
+  the beat cannot be timed from volumes alone: one anchor (`pt_zavala_loop`) plus a fixed chain.
+  Best run so far ("presque parfait"): pose at `pt_plaza_spawn_init`; at `pt_zavala_loop`:
+  `sc_fake_shield`, wave 1 (+2 s), `sc_zavala_combat` activate (+5 s). Only defect: he takes
+  cover a little late (the combat scene's own cover, after the player can see him).
+- Wave 1 as placed: `squad_kill_cabal_1/2` passive, `sq_plaza_reinforce_start_a/b` +
+  `sq_plaza_reinforce_a_a/a_b` with `obj_plaza_kill_cabal` (one task group only, 0).
+  Untouched: `squad_kill_cabal_3..8`, `squad_cabal_dropoff_1`, `reinforce_a_c/a_d(+extra)`,
+  wave B, `interim_a_*`, the end-of-wave dialogue.
+- Activity-level SDK is no help: `matchmaking_config_tag = 0xFFFFFFFF` (not matchmade),
+  `mission.tasks = {}` (no authored task graph for Homecoming; the beat logic was Bungie's
+  server script), `ap_*` are type-47 nav points.
+- Backups of the variants: `mission_towerfall_backup/plaza.lua.chain_variant` (the chain),
+  `plaza.lua.swap_variant` (sc_zavala cover at spawn + actor swap behind the shield + combat).
+
+## Session 2026-09-14 (evening): the in-game Sequencer
+
+The plaza beat timing was being tuned by hand-editing timers; it is now data-driven.
+
+- **UI**: Activity Host > World > **Sequencer** page (`src/server/ui/activity_host/
+  activity_host_sequencer_view.{h,cpp}`). A sequence = a start + an ordered list of steps, each
+  with a delay (ms) relative to the previous step. Starts: `trigger_enter` / `trigger_exit`
+  (volume picked from the package trigger-volume catalog, stored as registry/type/index plus the
+  type-31 name as fallback), `squads_clear` (every listed squad seen alive then at 0 for 1.5 s),
+  `sequence_end`, `spawn` (bootflow 38), `manual`. Steps: squad (count, objective, hold), retire,
+  cue, scene (name + slot id, mode full/activate/keys, explicit keys or resource tag for discovery
+  at spawn, new generation), pose (cell, group, action, new generation = actor replacement),
+  effect (hop-on + filter, players), object, device, directive, sequence, clear, probe. Pickers
+  come from the bound SDK view (slots of the scenario by type). Save writes
+  `Sunrise/sequences/<file>.json`; "Save + reload script" also restarts the mission script (new
+  trigger watches still need a mission restart).
+- **Runtime**: `scripts/mission_towerfall/sequencer.lua` (+ `json.lua`), loaded by the root at
+  `on_start` (`SEQ.load` + `SEQ.install` before the watch timer; `SEQ.on_spawn` at bootflow 38).
+  Timers are `seq:<name>:<step>`; probes are prefixed `seq `. Manual start from `rt_cmd`:
+  `require("mission_towerfall.sequencer").start(context, "name", "manual")`.
+- **Native**: `context:read_artifact_text{ path = }` (read-only, under `Sunrise/`, 1 MiB cap) in
+  `mission_script_lua_probe_api.cpp`. Built and deployed 2026-09-14 18:21.
+- `Sunrise/sequences/mission_towerfall.json` reproduces the plaza opening as it stood
+  (`zavala_spawn` on spawn, `plaza_loop` on `pt_zavala_loop`, `wave1_clear` on the six wave-1
+  squads); `plaza.lua` keeps only the fleet and the spire (the hand-written version is in
+  `mission_towerfall_backup/plaza.lua.pre_sequencer`).
+- Squad clear tracking (`M.track_clear` in `common.lua`, `squad_state.alive_count`): a zero must
+  persist 1.5 s (pods report 0 transiently for up to ~1.4 s after placement), a squad that
+  reports alive again is un-cleared, pending zeros are confirmed from the poll tick
+  (`M.tick_clears`) because no event may follow the last death. The `objective_progress`
+  counter is NOT a kill count (it reached 30 in one run).
+- Bash-tool heredocs collapse a double backslash to a single one: write files that contain
+  backslashes (C++ string literals, Lua escapes, vcxproj paths) through the Write tool.
+
+## Session 2026-09-15: a scene can be stopped -- the Zavala hand-over is solved
+
+- **The type-43 Auth header's `clear` bit ends the scene's generation and releases its actors.**
+  It is what the community fork's `scene:stop{}` sends (same generation, same keys, `clear` = 1);
+  our encoder had always written it as 0. Exposed as `set_scene_events{generation=, events=,
+  clear=true}` and as scene mode `clear` in the sequencer. Validated live, isolated
+  (`test_stop`, 15 s gaps): pose -> `sc_zavala` key 3 (cover) -> clear -> `sc_zavala_combat`
+  activate takes him **in place, no vanish, no teleport**; then combat clear -> the bunker scene
+  plays on **our** Zavala (no duplicate, the bubble protects the player). The stopped actor keeps
+  its pose (the fork saw Shaxx "stranded" the same way), which is exactly what a hand-over needs.
+  The actor-swap (new program generation) is no longer used on the plaza.
+- The plaza sequences now: `zavala_spawn` (pose + `sc_zavala` key 3), `plaza_loop` (shield,
+  +2 s wave 1, `sc_zavala` clear, +2 s combat activate), `wave1_clear` (Cue 52 -> +6 s a_d ->
+  +7 s Cue 53 -> +0.5 s combat clear + bunker + player shield effect -> +7 s effect off -> +1 s
+  Cue 51 -> a_c / a_d_extra / interim_a_a). `test_stop` kept, disabled.
+- `play_actor_action{enabled=false}` (the type-2 root enabled bit) on a fresh generation:
+  exposed, used by the hot reload's despawn; reported as **not removing** the actor (to
+  re-check with the deployed DLL -- the first attempt ran before the deploy).
+- Sequencer runtime fixes: timer names use dots (`seq.<name>.<n>`, the key charset is
+  `[A-Za-z0-9_.-/]`, 63 max); disabled sequences arm nothing; a volume crossing is dispatched to
+  **every** watch on that volume (two beats may share one) and the client watch is released only
+  when none still needs it; generations rebased on the clock at each load (hot reload).
+- Hot reload (`Save + hot reload`): script reload in place -> squads placed by sequences retired,
+  cells "despawned" (see above), generations rebased, triggers re-armed, the spawn sequence
+  replays. Program-created actors persist until replaced.
+- The page keeps its loaded document: after an external edit of the JSON, press **Load** before
+  **Save** (Save writes the in-memory document).
+
+## Plaza v1 (2026-09-15) -- data-driven, in the repo
+
+The plaza opening through the end of wave 3 plays as authored, entirely from
+`sequences/mission_towerfall.json` (deployed copy: `Sunrise/sequences/`). The scripts are now in
+the repo too (`scripts/mission_towerfall.lua`, `scripts/mission_towerfall/*.lua`) -- copy them to
+`E:/Sunrise/Game/bin/x64/Sunrise/scripts/` to deploy.
+
+Final timeline (delays relative to the sequence start):
+- `zavala_spawn` (spawn): pose on `sq_zavala__banshee` + `sc_zavala` key 3 -> cover.
+- `plaza_loop` (`pt_zavala_loop`): `sc_fake_shield`; +2 s wave 1 (`kill_cabal_1/2` held,
+  `start_a/b`, `a_a/a_b`) + `sc_zavala` **clear**; +4.2 s `sc_zavala_combat` activate.
+- `wave1_clear` (wave 1 dead): Cue 52; +4 s `a_d` x2; +11 s combat clear + bunker full; +13.4 s
+  Cue 53; +25.4 s Cue 51 + bunker clear + `a_d` x3; +32.4 s `a_d_extra` x3 + `kill_cabal_1/2`
+  held; +35.4 s combat activate; +36.4 s `interim_a_a` x2; +37.4 s `a_a_extra` x4.
+- `wave2_clear` (wave 2 dead): Cue 55 + `interim_a_b` x2; +10.5 s combat clear + bunker full;
+  +13.5 s Cue 57; +25 s Cue 54 + bunker clear; +26.5 s `b_a` x3; +35.5 s `b_b` x3; +41.5 s
+  `b_a_extra` x3; +47.5 s `kill_cabal_1/2` held; +50.5 s combat activate; +51.5 s `b_b_extra` x3.
+- `wave3_clear` (wave 3 dead): Cue 59; +6 s directive "Leave the Plaza and find the Speaker".
+
+Rules that made it work (all validated live):
+- **Hand-over between scenes = the `clear` bit** (`scene` step, mode `clear`): stop the holder,
+  then activate the next scene on the same actor. Never a pose swap. The bunker scene without a
+  free actor spawns a duplicate whose bubble does not protect.
+- **`sc_zavala_combat` shoots only at its own victims**: `squad_kill_cabal_1/2` must be placed
+  (held, task group -1) at their points before each activation; otherwise he comes out and goes
+  back without firing. Re-placing the dead squads with explicit counts recreates them. Per the
+  footage he sorties once per wave: mid-wave 2, late in wave 3 (the victims + activate move with
+  it). After a bunker phase he only resumes with a fresh activation.
+- **Wave end** = the objective's kill counter (`objective_progress` on `obj_plaza_kill_cabal` is
+  one event per member killed) reaching the members placed on that objective by squad steps,
+  held squads excluded (Zavala's victims never count), all listed squads placed; fallback:
+  every listed squad at `alive_count` 0 for 10 s (20 s after placement if never seen alive).
+  Stale wait-list entries (squads no enabled sequence places) are ignored with a warning.
+  `sq_plaza_reinforce_a_c` never spawned (it shares `a_b`'s pod rule) and is not used.
+- The player shield effect (`ho_bubble_shield`) is not needed: the bunker scene's bubble on our
+  Zavala protects.
+- Kill counters are cumulative per mission; the sequencer keeps the last count in a durable
+  variable (`seq.kills.<idx>`) as an offset for hot reloads.
+- Sequencer page: **`Load` before `Save`** whenever the JSON was edited outside the page (Save
+  writes the page's in-memory document; this cost three overwritten fixes today).
+
+Not done yet (polish): exact squads/pods per wave vs the footage (`a_c` replacement, extras,
+`dropoff_1`, `interim` roles), Cue 58/59 identification, `kill_cabal_3..8` roles, the pod
+`alive_count` flicker, `play_actor_action{enabled=false}` never removed an actor.
 
 ## Leads for the next session
 

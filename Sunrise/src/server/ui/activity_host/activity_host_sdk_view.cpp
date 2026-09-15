@@ -17,6 +17,7 @@
 #include "../../bap/runtime.h"
 #include "activity_host_scriptable_browser.h"
 #include "activity_host_sdk_mission_view.h"
+#include "activity_host_sequencer_view.h"
 #include "activity_host_sdk_squad_view.h"
 #include "activity_host_sdk_state_pages.h"
 #include "activity_host_sdk_symbol_pages.h"
@@ -168,6 +169,7 @@ enum class Page : std::uint8_t {
     positions,
     behaviors,
     script,
+    sequencer,
 };
 
 /** One navigation row: its page, its name, and the one line that page prints. */
@@ -179,7 +181,7 @@ struct PageRow final {
 };
 
 /** The navigation order. Actions first, then the read-only pages. */
-constexpr std::array<PageRow, 20> kPages{{
+constexpr std::array<PageRow, 21> kPages{{
     {Page::squads, "Squads", "Place an authored squad.", marker::WorldPage::squads},
     {Page::idles, "Idles", "Start an actor's authored state.", marker::WorldPage::squads},
     {Page::combatants, "Combatants", "Bind a combatant, retain a channel."},
@@ -203,6 +205,7 @@ constexpr std::array<PageRow, 20> kPages{{
      marker::WorldPage::positions},
     {Page::behaviors, "Behaviors", "Compiled behavior roots. No action."},
     {Page::script, "Script", "Mission VM state and its output lane."},
+    {Page::sequencer, "Sequencer", "Build timed chains of squads, cues and scenes; saved as JSON for the script."},
 }};
 
 /** Page the navigation is on. It survives a rebind so an operator keeps their place. */
@@ -292,6 +295,9 @@ void draw_page(const PageRow& row,
         return;
     case Page::script:
         draw_script_runtime(instance);
+        return;
+    case Page::sequencer:
+        sequencer_view::draw(view, instance);
         return;
     }
 }

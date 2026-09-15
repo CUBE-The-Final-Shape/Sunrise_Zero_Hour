@@ -1,0 +1,146 @@
+-- Homecoming (mission_towerfall, activity 0x62D85FB3). Root controller: loads the shared helpers
+-- and one module per bubble, merges their trigger watches and named timers, and routes the
+-- runtime callbacks. Beat logic lives in scripts/mission_towerfall/*.lua.
+-- Where the player spawns: 72 = bubble 9 (Underwatch, the mission start), 32 = bubble 4
+-- (Military/hangar). Slice-set/region indices from the generated SDK's state table. Starting in a
+-- later bubble installs only that bubble's beats and the following ones.
+local START_REGION = 48
+
+local M = require("mission_towerfall.common")
+local SEQ = require("mission_towerfall.sequencer")
+-- Bubbles in mission order (each module declares its `region`). Only the start bubble and the
+-- ones after it are installed, so a later START_REGION arms no watches for beats it skips.
+local MISSION_ORDER = {
+    require("mission_towerfall.underwatch")(M), -- 72, bubble 9
+    require("mission_towerfall.military")(M),   -- 32, bubble 4
+    require("mission_towerfall.plaza")(M),      -- the Tower plaza, after the hangar
+}
+local beats = {}
+local started = false
+for _, beat in ipairs(MISSION_ORDER) do
+    if beat.region == START_REGION then started = true end
+    if started then beats[#beats + 1] = beat end
+end
+for _, beat in ipairs(beats) do
+    if beat.watches then M.add_watches(beat.watches) end
+    if beat.timers then M.add_timers(beat.timers) end
+end
+
+local POLL_TIMER = "rt_poll"
+local POLL_INTERVAL_MS = 300
+local WATCH_TIMER = "watch_retry"
+-- The scriptables catalog (real trigger-volume geometry) only builds on request, on a background
+-- thread: the first arming attempt kicks it off and this retries until every watch is armed.
+local WATCH_RETRY_MS = 500
+-- bootflow_step 38 = activity:in_world, the client's own named engine state; used as the spawn
+-- signal (measured ~2.8s before player_position_present).
+local IN_WORLD_STEP = 38
+local last_bootflow_step = nil
+local spawn_fired = false
+
+local function poll(context, state)
+    local stepOk, step = pcall(function() return context:bootflow_step() end)
+    if stepOk and step ~= last_bootflow_step then
+        context:probe("bootflow_step transitioned to " .. tostring(step))
+        if step == IN_WORLD_STEP and not spawn_fired then
+            spawn_fired = true
+            M.discover_scene_event_keys(context)
+            SEQ.on_spawn(context)
+            -- Only the bubble the player spawns in runs its spawn beat; the others are entered
+            -- on foot (or skipped entirely when starting later in the mission).
+            for _, beat in ipairs(beats) do
+                if beat.on_spawn and beat.region == START_REGION then beat.on_spawn(context, state) end
+            end
+        end
+        last_bootflow_step = step
+    end
+    M.tick_clears(context)
+    -- Operator commands: a Lua chunk dropped at Sunrise/rt_cmd.txt runs once with (context, state).
+    local command = context:poll_command()
+    if command then
+        local fn, loadErr = load(command)
+        if not fn then
+            context:probe("cmd load error: " .. tostring(loadErr))
+        else
+            local ok, result = pcall(fn, context, state)
+            context:probe("cmd result ok=" .. tostring(ok) .. " value=" .. tostring(result))
+        end
+    end
+    context:start_timer(POLL_TIMER, POLL_INTERVAL_MS)
+end
+
+return {
+    initial_state = { region_index = START_REGION },
+
+    on_start = function(context, state)
+        context:probe("rt_bridge online")
+        -- Drop the watches an earlier run in this process left armed (the 64-entry client table
+        -- survives mission restarts; beats skipped by START_REGION never release theirs).
+        local okc, errc = pcall(function() context:clear_trigger_watches() end)
+        context:probe("clear_trigger_watches ok=" .. tostring(okc) .. " err=" .. tostring(errc))
+        -- Data-driven sequences (Sunrise/sequences/*.json, written by the in-game Sequencer).
+        -- A reload while already in the world is a hot reload: sequences replay from clean.
+        local okb, step = pcall(function() return context:bootflow_step() end)
+        local hot = okb and step == IN_WORLD_STEP
+        if SEQ.load(context, state) then SEQ.install(context, hot) end
+        context:start_timer(WATCH_TIMER, 0)
+        poll(context, state)
+    end,
+
+    on_event_timer_elapsed = function(context, state, event)
+        if event.timer_name == POLL_TIMER then
+            poll(context, state)
+        elseif event.timer_name == WATCH_TIMER then
+            if not M.try_arm_watches(context) then
+                context:start_timer(WATCH_TIMER, WATCH_RETRY_MS)
+            end
+        else
+            M.dispatch_timer(context, state, event)
+        end
+    end,
+
+    on_event_player_trigger = function(context, state, event)
+        M.dispatch_player_trigger(context, state, event)
+    end,
+
+    -- Native use receipts (hold-to-open doors, pickups): the first beat that claims it wins.
+    on_event_object_interacted = function(context, state, event)
+        context:probe(string.format("object_interacted registry_key=%s slot_type=%s slot_index=%s generation=%s",
+            tostring(event.registry_key), tostring(event.slot_type), tostring(event.slot_index), tostring(event.generation)))
+        for _, beat in ipairs(beats) do
+            if beat.on_object_interacted and beat.on_object_interacted(context, state, event) then return end
+        end
+    end,
+
+    -- Real completion/refusal outcome for effects we fired (ok=true on a call only means the call
+    -- shape was valid).
+    on_event_effect_result = function(context, state, event)
+        context:probe(string.format("effect_result request_key=%s effect=%s outcome=%s outcome_code=%s",
+            tostring(event.request_key), tostring(event.effect), tostring(event.outcome), tostring(event.outcome_code)))
+    end,
+
+    on_event_squad_state = function(context, state, event)
+        M.dispatch_squad_state(context, state, event)
+    end,
+
+    -- Diagnostic while we work out where the shipped "x of 3" counter comes from: the client
+    -- publishes objective/task progress on its own, and nothing in the script drives it yet.
+    on_event_objective_progress = function(context, state, event)
+        -- `objective` is the block ordinal inside the reporting type-3 slot, not a slot identity:
+        -- the slot comes from the event's registry/type/index.
+        context:probe(string.format(
+            "objective_progress slot=%s/%s/%s block=%s task=%s count=%s previous=%s",
+            tostring(event.registry_key), tostring(event.slot_type), tostring(event.slot_index),
+            tostring(event.objective), tostring(event.task),
+            tostring(event.task_count), tostring(event.previous_task_count)))
+        for _, beat in ipairs(beats) do
+            if beat.on_objective_progress then beat.on_objective_progress(context, state, event) end
+        end
+        SEQ.on_objective_progress(context, event)
+    end,
+
+    on_event_scene_finished = function(context, state, event)
+        context:probe("scene_finished activation_token=" .. tostring(event.activation_token)
+            .. " last_activated=" .. tostring(M.last_scene_activated))
+    end,
+}

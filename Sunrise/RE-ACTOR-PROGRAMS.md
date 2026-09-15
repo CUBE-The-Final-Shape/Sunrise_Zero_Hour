@@ -1,15 +1,5 @@
 # RE notes — client reflection, squad Auth fields, actor-program kinds (2026-09-13)
 
-Static work on the Ghidra dump `destiny2_live_dump.bin` (Ghidra base `0x7ff740df0000`; the file
-copy `E:\Sunrise\destiny2_live_dump.bin` is the same image at base `0x7ff729760000`, so
-`file_offset = va - base`). Upstream RVAs (image base `0x140000000`) are the same build:
-`rva + base` works for everything quoted from the removed Ember notes (commit `4593154`).
-
-Tool: `tools/reflect_dump.py` (pure Python, reads the dump file; no Ghidra needed).
-`python tools/reflect_dump.py rec <tag>...` prints a class descriptor with its field table,
-`... kids <tag>` lists subclasses (records whose parent field is the tag), `... stream` rebuilds
-`tools/reflect_stream.pkl` (index of the 20 428 type records). `tools/reflect_refs.py` finds
-records referencing a tag.
 
 ## Reflection database layout (decoded)
 

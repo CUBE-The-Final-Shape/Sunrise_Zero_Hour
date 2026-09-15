@@ -1036,10 +1036,12 @@ constexpr std::int8_t kFilterModeInside = 1;
     // program's otherwise-absent spatial target. The native decoder resolves a point set
     // (type 48, the marker is the point index) or an authored path (type 58); any other type
     // stalls the client, so the encoder refuses it.
-    static constexpr std::array<std::string_view, 7> kDeclared{
-        "generation", "revision", "group", "action", "target", "target_mode", "target_marker"};
+    static constexpr std::array<std::string_view, 8> kDeclared{
+        "generation", "revision", "group", "action", "target", "target_mode", "target_marker", "enabled"};
     refuse_unknown_arguments(state, kDeclared);
     const lua_Integer generation = checked_integer_argument(state, "generation");
+    // enabled = false: the cell's enabled bit cleared on this generation (actor removal probe).
+    const bool enabled = optional_boolean_argument(state, "enabled", true);
     const lua_Integer revision = checked_integer_argument(state, "revision");
     const lua_Integer group = checked_integer_argument(state, "group");
     const lua_Integer action = checked_integer_argument(state, "action");
@@ -1060,6 +1062,7 @@ constexpr std::int8_t kFilterModeInside = 1;
                                      static_cast<std::uint32_t>(action)};
     request.targetMode = static_cast<std::uint32_t>(targetMode);
     request.targetMarker = static_cast<std::uint32_t>(targetMarker);
+    request.enabled = enabled;
     SlotHandle targetHandle{};
     if (optional_argument(state, "target", kSlotMetatable, targetHandle)) {
         SlotDefinition target{};
@@ -1425,8 +1428,10 @@ constexpr std::int8_t kFilterModeInside = 1;
     namespace scene = middleware::bap::activity_message::scene_events;
     const auto* const handle =
         static_cast<const SlotHandle*>(luaL_checkudata(state, 1, kSlotMetatable));
-    static constexpr std::array<std::string_view, 2> kDeclared{"generation", "events"};
+    static constexpr std::array<std::string_view, 3> kDeclared{"generation", "events", "clear"};
     refuse_unknown_arguments(state, kDeclared);
+    // clear = true sets the header's clear bit (never sent by the shipped form; probe).
+    const bool clear = optional_boolean_argument(state, "clear", false);
     SlotDefinition slot{};
     if (!current_slot(state, *handle, slot) || slot.slotType != scene::kSlotType
         || slot.componentClass != scene::kComponentClass || slot.authSchema != scene::kSchema
@@ -1462,7 +1467,8 @@ constexpr std::int8_t kFilterModeInside = 1;
                        std::span(events).first(count),
                        body,
                        bytes,
-                       bits)) {
+                       bits,
+                       clear)) {
         return luaL_error(state, "scene event keys must be unique");
     }
     return queue_slot_auth(state, slot, scene::kSchema, bits, std::span(body).first(bytes));

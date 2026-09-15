@@ -1,0 +1,88 @@
+{
+  "version": 1,
+  "sequences": [
+    {
+      "name": "zavala_spawn",
+      "enabled": true,
+      "once": true,
+      "start": { "kind": "spawn" },
+      "steps": [
+        { "delay_ms": 0, "kind": "pose", "cell": "sq_zavala__banshee", "group": 2947619346, "action": 1090273498, "new_generation": true, "sends": 2 },
+        { "delay_ms": 0, "kind": "scene", "scene": "sc_zavala", "slot": "slot/80b50746/000002/0002/002b", "mode": "full", "new_generation": true, "keys": [3099967653] }
+      ]
+    },
+    {
+      "name": "plaza_loop",
+      "enabled": true,
+      "once": true,
+      "start": { "kind": "trigger_enter", "name": "pt_zavala_loop", "registry_key": 4177091021, "slot_type": 60, "slot_index": 39 },
+      "steps": [
+        { "delay_ms": 0, "kind": "scene", "scene": "sc_fake_shield", "slot": "slot/80b50616/000003/0003/002b", "mode": "full", "new_generation": true, "resource": 2159552251 },
+        { "delay_ms": 2000, "kind": "squad", "squad": "squad_kill_cabal_1", "count": 1, "objective": "slot/80b50746/000009/0009/0003", "hold": true },
+        { "delay_ms": 0, "kind": "squad", "squad": "squad_kill_cabal_2", "count": 1, "objective": "slot/80b50746/000009/0009/0003", "hold": true },
+        { "delay_ms": 0, "kind": "squad", "squad": "sq_plaza_reinforce_start_a", "count": 1, "objective": "slot/80b50746/000009/0009/0003", "hold": false },
+        { "delay_ms": 0, "kind": "squad", "squad": "sq_plaza_reinforce_start_b", "count": 1, "objective": "slot/80b50746/000009/0009/0003", "hold": false },
+        { "delay_ms": 0, "kind": "squad", "squad": "sq_plaza_reinforce_a_a", "count": 1, "objective": "slot/80b50746/000009/0009/0003", "hold": false },
+        { "delay_ms": 0, "kind": "squad", "squad": "sq_plaza_reinforce_a_b", "count": 1, "objective": "slot/80b50746/000009/0009/0003", "hold": false },
+        { "delay_ms": 0, "kind": "scene", "scene": "sc_zavala", "slot": "slot/80b50746/000002/0002/002b", "mode": "clear", "new_generation": false, "keys": [3099967653] },
+        { "delay_ms": 2200, "kind": "scene", "scene": "sc_zavala_combat", "slot": "slot/80b50746/000003/0003/002b", "mode": "activate", "new_generation": true }
+      ]
+    },
+    {
+      "name": "wave1_clear",
+      "enabled": true,
+      "once": true,
+      "start": { "kind": "squads_clear", "squads": ["squad_kill_cabal_1", "squad_kill_cabal_2", "sq_plaza_reinforce_start_a", "sq_plaza_reinforce_start_b", "sq_plaza_reinforce_a_a", "sq_plaza_reinforce_a_b"] },
+      "steps": [
+        { "delay_ms": 0, "kind": "cue", "cue": 52 },
+        { "delay_ms": 4000, "kind": "squad", "squad": "sq_plaza_reinforce_a_d", "count": 2, "objective": "slot/80b50746/000009/0009/0003", "hold": false },
+        { "delay_ms": 7000, "kind": "scene", "scene": "sc_zavala_combat", "slot": "slot/80b50746/000003/0003/002b", "mode": "clear", "new_generation": false },
+        { "delay_ms": 0, "kind": "scene", "scene": "sc_zavala_bunker_shield_bunker", "slot": "slot/80b50746/000004/0004/002b", "mode": "full", "new_generation": true, "resource": 2159552253 },
+        { "delay_ms": 2400, "kind": "cue", "cue": 53 },
+        { "delay_ms": 12000, "kind": "cue", "cue": 51 },
+        { "delay_ms": 0, "kind": "scene", "scene": "sc_zavala_bunker_shield_bunker", "slot": "slot/80b50746/000004/0004/002b", "mode": "clear", "new_generation": false },
+        { "delay_ms": 0, "kind": "squad", "squad": "sq_plaza_reinforce_a_d", "count": 3, "objective": "slot/80b50746/000009/0009/0003", "hold": false },
+        { "delay_ms": 7000, "kind": "squad", "squad": "sq_plaza_reinforce_a_d_extra", "count": 3, "objective": "slot/80b50746/000009/0009/0003", "hold": false },
+        { "delay_ms": 0, "kind": "squad", "squad": "squad_kill_cabal_1", "count": 1, "objective": "slot/80b50746/000009/0009/0003", "hold": true },
+        { "delay_ms": 0, "kind": "squad", "squad": "squad_kill_cabal_2", "count": 1, "objective": "slot/80b50746/000009/0009/0003", "hold": true },
+        { "delay_ms": 3000, "kind": "scene", "scene": "sc_zavala_combat", "slot": "slot/80b50746/000003/0003/002b", "mode": "activate", "new_generation": true },
+        { "delay_ms": 1000, "kind": "squad", "squad": "sq_plaza_interim_a_a", "count": 2, "objective": "slot/80b50746/000009/0009/0003", "hold": false },
+        { "delay_ms": 1000, "kind": "squad", "squad": "sq_plaza_reinforce_a_a_extra", "count": 4, "objective": "slot/80b50746/000009/0009/0003", "hold": false }
+      ]
+    },
+    {
+      "name": "wave2_clear",
+      "enabled": true,
+      "once": true,
+      "start": { "kind": "squads_clear", "squads": ["sq_plaza_reinforce_a_d", "sq_plaza_reinforce_a_d_extra", "sq_plaza_interim_a_a", "sq_plaza_reinforce_a_a_extra"] },
+      "steps": [
+        { "delay_ms": 0, "kind": "probe", "text": "wave 2 clear" },
+        { "delay_ms": 500, "kind": "cue", "cue": 55 },
+        { "delay_ms": 0, "kind": "squad", "squad": "sq_plaza_interim_a_b", "count": 2, "objective": "slot/80b50746/000009/0009/0003", "hold": false },
+        { "delay_ms": 10000, "kind": "scene", "scene": "sc_zavala_combat", "slot": "slot/80b50746/000003/0003/002b", "mode": "clear", "new_generation": false },
+        { "delay_ms": 0, "kind": "scene", "scene": "sc_zavala_bunker_shield_bunker", "slot": "slot/80b50746/000004/0004/002b", "mode": "full", "new_generation": true, "resource": 2159552253 },
+        { "delay_ms": 3000, "kind": "cue", "cue": 57 },
+        { "delay_ms": 11500, "kind": "cue", "cue": 54 },
+        { "delay_ms": 0, "kind": "scene", "scene": "sc_zavala_bunker_shield_bunker", "slot": "slot/80b50746/000004/0004/002b", "mode": "clear", "new_generation": false },
+        { "delay_ms": 1500, "kind": "squad", "squad": "sq_plaza_reinforce_b_a", "count": 3, "objective": "slot/80b50746/000009/0009/0003", "hold": false },
+        { "delay_ms": 9000, "kind": "squad", "squad": "sq_plaza_reinforce_b_b", "count": 3, "objective": "slot/80b50746/000009/0009/0003", "hold": false },
+        { "delay_ms": 6000, "kind": "squad", "squad": "sq_plaza_reinforce_b_a_extra", "count": 3, "objective": "slot/80b50746/000009/0009/0003", "hold": false },
+        { "delay_ms": 6000, "kind": "squad", "squad": "squad_kill_cabal_1", "count": 1, "objective": "slot/80b50746/000009/0009/0003", "hold": true },
+        { "delay_ms": 0, "kind": "squad", "squad": "squad_kill_cabal_2", "count": 1, "objective": "slot/80b50746/000009/0009/0003", "hold": true },
+        { "delay_ms": 3000, "kind": "scene", "scene": "sc_zavala_combat", "slot": "slot/80b50746/000003/0003/002b", "mode": "activate", "new_generation": true },
+        { "delay_ms": 1000, "kind": "squad", "squad": "sq_plaza_reinforce_b_b_extra", "count": 3, "objective": "slot/80b50746/000009/0009/0003", "hold": false }
+      ]
+    },
+    {
+      "name": "wave3_clear",
+      "enabled": true,
+      "once": true,
+      "start": { "kind": "squads_clear", "squads": ["sq_plaza_interim_a_b", "sq_plaza_reinforce_b_a", "sq_plaza_reinforce_b_b", "sq_plaza_reinforce_b_a_extra", "sq_plaza_reinforce_b_b_extra"] },
+      "steps": [
+        { "delay_ms": 0, "kind": "probe", "text": "wave 3 clear: end of the plaza" },
+        { "delay_ms": 1500, "kind": "cue", "cue": 59 },
+        { "delay_ms": 4500, "kind": "directive", "hash": 3580553629, "label": "Leave the Plaza and find the Speaker" }
+      ]
+    }
+  ]
+}

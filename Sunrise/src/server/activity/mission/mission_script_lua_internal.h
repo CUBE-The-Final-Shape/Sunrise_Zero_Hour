@@ -137,6 +137,7 @@ void register_slot_metatables(lua_State* state);
 
 [[nodiscard]] int context_probe(lua_State* state);
 [[nodiscard]] int context_poll_command(lua_State* state);
+[[nodiscard]] int context_read_artifact_text(lua_State* state);
 
 // Typed effects, each defined beside the handle it needs.
 

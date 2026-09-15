@@ -585,6 +585,8 @@ resolve_message_name(lua_State* state, std::string_view name, ActivityMessageDef
         lua_pushcfunction(state, &context_probe);
     } else if (key == "poll_command") {
         lua_pushcfunction(state, &context_poll_command);
+    } else if (key == "read_artifact_text") {
+        lua_pushcfunction(state, &context_read_artifact_text);
     } else if (key == "region_arrival_pending") {
         lua_pushcfunction(state, &context_region_arrival_pending);
     } else if (key == "player_position_present") {

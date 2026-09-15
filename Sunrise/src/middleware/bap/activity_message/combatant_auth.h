@@ -149,6 +149,12 @@ struct ActionRequest final {
     std::uint16_t targetSlotIndex{};
     std::uint32_t targetMode{};
     std::uint32_t targetMarker{kActionNoTargetMarker};
+    /**
+     * Root field .3, the cell's enabled bit. Every shipped program is sent enabled; `false` on
+     * a fresh generation is the candidate for removing a program-created actor (the shipped
+     * encoders never wrote it, so its client effect is established live).
+     */
+    bool enabled{true};
 };
 
 /** @return True when a 31-bit counter is positive and representable. */
@@ -331,7 +337,7 @@ inline constexpr std::uint32_t kMaximumProgramKind = 9;
                                               request.targetSlotType,
                                               request.targetSlotIndex);
     };
-    return write_root(writer, request.generation, true)
+    return write_root(writer, request.generation, request.enabled)
            && write_program_header(writer, request.revision, kActionProgramKind)
            && fields::write_fields(writer, identities) && writeTarget()
            && fields::write_fields(writer, tail)

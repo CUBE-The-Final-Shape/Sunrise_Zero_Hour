@@ -43,13 +43,16 @@ inline constexpr std::uint32_t kInvalidEventKey = 0xFFFFFFFFU;
  * scalar, and the cumulative distinct nonzero event keys.
  * @param generation Positive scene generation.
  * @param events Distinct nonzero event keys.
+ * @param clear The header's clear bit. The shipped event-only form never sets it; its client
+ *        meaning (a release of the scene and its participants is the hope) is established live.
  * @param bytes Receives the byte count. @param bits Receives the meaningful bit count.
  */
 [[nodiscard]] inline bool encode(std::int32_t generation,
                                  std::span<const std::uint32_t> events,
                                  std::span<std::byte> output,
                                  std::size_t& bytes,
-                                 std::size_t& bits) noexcept {
+                                 std::size_t& bits,
+                                 bool clear = false) noexcept {
     bytes = 0;
     bits = 0;
     const std::size_t expectedBits = kHeaderBits + kEventKeyWidth * events.size();
@@ -69,7 +72,7 @@ inline constexpr std::uint32_t kInvalidEventKey = 0xFFFFFFFFU;
     }
     encoding::bits::Writer writer(output);
     if (!writer.write(static_cast<std::uint32_t>(generation) + fields::kSigned32Bias, 32)
-        || !writer.write(0, fields::kBoolWidth) || !writer.write(0, kDependencyCountWidth)
+        || !writer.write(clear ? 1U : 0U, fields::kBoolWidth) || !writer.write(0, kDependencyCountWidth)
         || !writer.write(0, kScalarWidth) || !writer.write(events.size(), kEventCountWidth)) {
         return false;
     }

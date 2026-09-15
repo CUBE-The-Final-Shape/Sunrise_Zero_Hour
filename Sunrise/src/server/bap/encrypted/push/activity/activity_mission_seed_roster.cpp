@@ -544,6 +544,9 @@ MissionSeedRosterResult append_initial_mission_seed(Session& session,
     std::array<bool, message::kBubbleKeyCapacity> managedActive{};
     std::array<std::uint32_t, message::kBubbleKeyCapacity> activationKeys{};
     std::array<std::uint8_t, message::kBubbleKeyCapacity> activationBubbles{};
+    // Whether each carried key names a group the client should hold active. An inactive one still
+    // needs its key: presence is a bit at the key's ordinal, never an omitted key.
+    std::array<bool, message::kBubbleKeyCapacity> activationActive{};
     std::size_t appendCount = 0;
     std::size_t managedCount = 0;
     std::size_t activationCount = 0;
@@ -624,11 +627,16 @@ MissionSeedRosterResult append_initial_mission_seed(Session& session,
             }
             appendRows[appendCount++] = static_cast<std::uint16_t>(source);
         }
-        if (!canonicalTopLevel && groupActive[source]) {
+        // Every non-top-level group the body carries must be named by its bubble sub-block: the
+        // encoder refuses a roster holding a sub-group no key references, and a mission-seed
+        // revision riding that refused body never publishes. An inactive group is carried with a
+        // cleared presence bit (`retired`), exactly as a removal is expressed above.
+        if (!canonicalTopLevel) {
             if (activationCount >= activationKeys.size()) {
                 return refuse_seed("activation_capacity");
             }
             activationBubbles[activationCount] = groupBubble[source];
+            activationActive[activationCount] = groupActive[source];
             activationKeys[activationCount++] = candidate.registryKey;
         }
     }
@@ -689,6 +697,7 @@ MissionSeedRosterResult append_initial_mission_seed(Session& session,
         }
         if (!present) {
             activationBubbles[missingKeyCount] = activationBubbles[index];
+            activationActive[missingKeyCount] = activationActive[index];
             activationKeys[missingKeyCount++] = activationKeys[index];
         }
     }
@@ -735,6 +744,9 @@ MissionSeedRosterResult append_initial_mission_seed(Session& session,
             return refuse_seed("append_group");
         }
         snapshot.roster.groups[position].missionSeedOnly = true;
+        // A carried-but-inactive group publishes as retired, so it costs no client capacity while
+        // its key keeps the sub-block complete.
+        snapshot.roster.groups[position].retired = !groupActive[appendRows[index]];
     }
     for (std::size_t index = 0; index < activationCount; ++index) {
         if (!append_bubble_key(

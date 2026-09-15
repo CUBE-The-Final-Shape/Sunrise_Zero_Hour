@@ -272,11 +272,17 @@ function M.play_cue(context, cue)
 end
 
 -- HUD directives live on slot row 1; name hashes come from the generated SDK's directive table.
-function M.set_directive(context, name_hash, label)
+-- `progress` (optional) = up to four lane values; the first two are the element's counter when
+-- the authored element shows one ("Defend the Tower": Assault repelled x / 3).
+-- `raw` skips the SDK lookup for hashes the generated SDK dropped (elements without a
+-- description, i.e. the progress-counter directives such as Homecoming's 0x23716DE6).
+function M.set_directive(context, name_hash, label, progress, raw)
     local ok, err = pcall(function()
-        context:slot(1):set_directive{ directive = { slot_row = 17312, name_hash = name_hash, element = 0 } }
+        context:slot(1):set_directive{ directive = { slot_row = 17312, name_hash = name_hash, element = 0 },
+                                       progress = progress, raw = raw or nil }
     end)
-    context:probe("set_directive(" .. label .. ") ok=" .. tostring(ok) .. " err=" .. tostring(err))
+    context:probe("set_directive(" .. label .. ") progress={" .. table.concat(progress or {}, ",")
+        .. "} ok=" .. tostring(ok) .. " err=" .. tostring(err))
 end
 
 -- Music: the mission's m_music_sensor is slot row 2 (directives are row 1, dialogue row 3).
@@ -381,30 +387,52 @@ local function u32le(bytes, offset) -- 0-based offset into a Lua byte string
     return a + b * 0x100 + c * 0x10000 + d * 0x1000000
 end
 
-function M.discover_scene_event_keys(context)
+-- Discovers the keys of every registered scene whose keys are still unknown. A resource (and
+-- a graph) resolves only once its region is streamed, so this runs at spawn and is then retried
+-- from the poll tick (and on demand before a scene is used) until nothing is missing. Returns
+-- the number of scenes still without keys.
+M.discover_verbose = true -- failures are logged on the spawn pass only, successes always
+function M.discover_scene_event_keys(context, name_filter)
+    local missing = 0
     for name, graph in pairs(M.scene_graph_tags) do
+        if name_filter and name ~= name_filter then goto continue end
+        if M.scene_event_keys[name] and #M.scene_event_keys[name] > 0 then goto continue end
         local graph_tag = graph
         if type(graph) == "table" then
             local ok, resolved, bytes = pcall(function() return context:resolve_hash(graph.resource) end)
             graph_tag = ok and resolved and bytes and u32le(bytes, 0xC0) or nil
-            context:probe(string.format("resolve_scene_graph(%s) resource=0x%08X graph=%s",
-                name, graph.resource, graph_tag and string.format("0x%08X", graph_tag) or "nil"))
+            if graph_tag or M.discover_verbose then
+                context:probe(string.format("resolve_scene_graph(%s) resource=0x%08X graph=%s",
+                    name, graph.resource, graph_tag and string.format("0x%08X", graph_tag) or "nil"))
+            end
             if graph_tag then M.scene_graph_tags[name] = graph_tag end
         end
-        if not graph_tag then goto continue end
+        if not graph_tag then missing = missing + 1; goto continue end
         local ok, keys = pcall(function() return context:find_event_gate_keys{ hash = graph_tag } end)
-        if ok and keys then
+        if ok and keys and #keys > 0 then
             M.scene_event_keys[name] = keys
             local parts = {}
             for _, key in ipairs(keys) do parts[#parts + 1] = string.format("0x%08X", key) end
             context:probe("discover_scene_event_keys(" .. name .. ") found=" .. #keys
                 .. " keys={" .. table.concat(parts, ",") .. "}")
         else
-            context:probe("discover_scene_event_keys(" .. name .. ") ok=" .. tostring(ok)
-                .. " err=" .. tostring(keys))
+            missing = missing + 1
+            if M.discover_verbose then context:probe("discover_scene_event_keys(" .. name .. ") ok=" .. tostring(ok)
+                .. " found=" .. tostring(ok and keys and #keys or nil) .. " err=" .. tostring(ok and "" or keys)) end
         end
         ::continue::
     end
+    return missing
+end
+
+-- Keys of one scene, discovering them now if the spawn-time pass ran before its region streamed.
+function M.scene_keys(context, name)
+    local keys = M.scene_event_keys[name]
+    if (not keys or #keys == 0) and M.scene_graph_tags[name] then
+        M.discover_scene_event_keys(context, name)
+        keys = M.scene_event_keys[name]
+    end
+    return keys or {}
 end
 
 function M.bind_scene(context, name)
@@ -423,7 +451,7 @@ end
 
 -- Publishes keys 1..upto (default: all) as one cumulative set.
 function M.step_scene(context, name, upto)
-    local keys = M.scene_event_keys[name] or {}
+    local keys = M.scene_keys(context, name)
     local count = upto or #keys
     if count > #keys then count = #keys end
     if (scene_committed[name] or 0) >= count or count == 0 then
@@ -443,7 +471,7 @@ end
 -- Publishes an explicit subset of keys (cumulative set), for scenes whose gates must not fire in
 -- index order (scene_shaxx: the door-close key sits before the second dialogue line).
 function M.publish_scene_keys(context, name, indices)
-    local keys = M.scene_event_keys[name] or {}
+    local keys = M.scene_keys(context, name)
     local events = {}
     for _, i in ipairs(indices) do if keys[i] then events[#events + 1] = keys[i] end end
     local ok, err = pcall(function()
@@ -582,6 +610,61 @@ function M.dispatch_player_trigger(context, state, event)
         "player_trigger unmatched volume_registry_key=%s volume_slot_type=%s volume_slot_index=%s",
         tostring(event.volume_registry_key), tostring(event.volume_slot_type),
         tostring(event.volume_slot_index)))
+end
+
+--------------------------------------------------------------------------------------------
+-- Mission-state transitions
+--------------------------------------------------------------------------------------------
+
+-- Only one `select_state` may be in flight. The roster stages a mission-seed revision and only
+-- commits it as published when the revision has not moved since; a second transition issued
+-- before the first is held bumps the revision, the commit is skipped, and `publicationPending`
+-- sticks forever -- every scene, sequence and cinematic call behind it then pends until it
+-- expires. So a request while another is pending is deferred until the client reports the
+-- region it holds. (Same guard as the community script's `own_region`.)
+M.region = nil          -- region the client last reported holding
+M.region_pending = nil  -- region requested and not yet held
+M.region_deferred = nil -- request parked behind the pending one
+
+-- `opts` is passed through to select_state (spawn_set_hash, retire_placed_props, no_teleport).
+function M.select_region(context, region, opts)
+    if M.region == region and M.region_pending == nil then
+        context:probe("select_region(" .. region .. ") already held")
+        return false
+    end
+    if M.region_pending ~= nil and M.region_pending ~= region then
+        M.region_deferred = { region = region, opts = opts }
+        context:probe(string.format("select_region(%d) deferred behind pending %d",
+            region, M.region_pending))
+        return false
+    end
+    M.region_deferred = nil
+    M.region_pending = region
+    local ok, err = pcall(function() context:select_state({ region_index = region }, opts or {}) end)
+    context:probe(string.format("select_region(%d) ok=%s err=%s", region, tostring(ok), tostring(err)))
+    return ok
+end
+
+-- Fed from on_event_client_state_changed. A settle-only delta omits the region fields, which
+-- does not mean the player left, so only a reported value updates anything.
+function M.note_client_region(context, held, current)
+    local region = held or current
+    if region == nil then return end
+    M.region = region
+    if M.region_pending == region then
+        M.region_pending = nil
+        context:probe("select_region: region " .. region .. " now held")
+        if M.region_on_held then
+            local fn = M.region_on_held
+            M.region_on_held = nil
+            fn(context, region)
+        end
+        local deferred = M.region_deferred
+        if deferred then
+            M.region_deferred = nil
+            M.select_region(context, deferred.region, deferred.opts)
+        end
+    end
 end
 
 --------------------------------------------------------------------------------------------

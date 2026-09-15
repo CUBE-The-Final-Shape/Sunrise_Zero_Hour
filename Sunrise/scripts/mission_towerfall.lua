@@ -2,7 +2,7 @@
 -- and one module per bubble, merges their trigger watches and named timers, and routes the
 -- runtime callbacks. Beat logic lives in scripts/mission_towerfall/*.lua.
 -- Where the player spawns: 72 = bubble 9 (Underwatch, the mission start), 32 = bubble 4
--- (Military/hangar). Slice-set/region indices from the generated SDK's state table. Starting in a
+-- (Military/hangar), 48 = bubble 6 (plaza), 0 = bubble 0 (boulevard/bazaar). Slice-set/region indices from the generated SDK's state table. Starting in a
 -- later bubble installs only that bubble's beats and the following ones.
 local START_REGION = 48
 
@@ -14,6 +14,8 @@ local MISSION_ORDER = {
     require("mission_towerfall.underwatch")(M), -- 72, bubble 9
     require("mission_towerfall.military")(M),   -- 32, bubble 4
     require("mission_towerfall.plaza")(M),      -- the Tower plaza, after the hangar
+    require("mission_towerfall.boulevard")(M),  -- 0, bubble 0: boulevard + bazaar
+    require("mission_towerfall.skybattle")(M),  -- 64, bubble 8: the Cabal command ship
 }
 local beats = {}
 local started = false
@@ -37,6 +39,11 @@ local WATCH_RETRY_MS = 500
 local IN_WORLD_STEP = 38
 local last_bootflow_step = nil
 local spawn_fired = false
+-- Scene keys live in regions that stream as the player advances: after the spawn pass, the
+-- scenes still without keys are retried from the poll every KEY_RETRY_MS until none is left.
+local KEY_RETRY_MS = 3000
+local keys_missing = true
+local next_key_retry = 0
 
 local function poll(context, state)
     local stepOk, step = pcall(function() return context:bootflow_step() end)
@@ -44,7 +51,9 @@ local function poll(context, state)
         context:probe("bootflow_step transitioned to " .. tostring(step))
         if step == IN_WORLD_STEP and not spawn_fired then
             spawn_fired = true
-            M.discover_scene_event_keys(context)
+            keys_missing = M.discover_scene_event_keys(context) > 0
+            M.discover_verbose = false
+            next_key_retry = (M.clock_ms(context) or 0) + KEY_RETRY_MS
             SEQ.on_spawn(context)
             -- Only the bubble the player spawns in runs its spawn beat; the others are entered
             -- on foot (or skipped entirely when starting later in the mission).
@@ -53,6 +62,14 @@ local function poll(context, state)
             end
         end
         last_bootflow_step = step
+    end
+    if spawn_fired and keys_missing then
+        local now = M.clock_ms(context) or 0
+        if now >= next_key_retry then
+            next_key_retry = now + KEY_RETRY_MS
+            keys_missing = M.discover_scene_event_keys(context) > 0
+            if not keys_missing then context:probe("discover_scene_event_keys: every scene resolved") end
+        end
     end
     M.tick_clears(context)
     -- Operator commands: a Lua chunk dropped at Sunrise/rt_cmd.txt runs once with (context, state).
@@ -142,5 +159,63 @@ return {
     on_event_scene_finished = function(context, state, event)
         context:probe("scene_finished activation_token=" .. tostring(event.activation_token)
             .. " last_activated=" .. tostring(M.last_scene_activated))
+    end,
+
+    -- A cinematic may only be activated once the client reports it HOLDS the region its state
+    -- owns; a merely requested destination is not enough (the Nyxara fork's Ember opening).
+    on_event_client_state_changed = function(context, state, event)
+        local held = event.held_region_index
+        local current = event.current_region_index
+        M.note_client_region(context, held, current)
+        if held ~= M.last_held_region or current ~= M.last_current_region then
+            M.last_held_region, M.last_current_region = held, current
+            context:probe(string.format("client_state held=%s current=%s requested=%s spawn=%s teleport=%s",
+                tostring(held), tostring(current), tostring(event.region_index),
+                tostring(event.spawn_state), tostring(event.teleport_state)))
+        end
+        for _, beat in ipairs(beats) do
+            if beat.on_client_state then beat.on_client_state(context, state, event) end
+        end
+    end,
+
+    -- A Ghost link reports its own level (generation, progress 0..1, active); interacting with
+    -- one raises this, never an object-interaction receipt.
+    on_event_ghost_link_state = function(context, state, event)
+        -- The client republishes the level on every tick while the player holds the link, so only
+        -- the edges are logged: the first report, a change of `active`, and completion.
+        local key = tostring(event.registry_key) .. "/" .. tostring(event.slot_index)
+        local progress = tonumber(event.progress) or 0
+        local previous = M.ghost_seen and M.ghost_seen[key]
+        if previous == nil or previous.active ~= event.active
+            or (progress >= 1 and not previous.done) then
+            M.ghost_seen = M.ghost_seen or {}
+            M.ghost_seen[key] = { active = event.active, done = progress >= 1 }
+            context:probe(string.format("ghost_link registry=%s index=%s gen=%s progress=%.2f active=%s",
+                tostring(event.registry_key), tostring(event.slot_index),
+                tostring(event.generation), progress, tostring(event.active)))
+        end
+        for _, beat in ipairs(beats) do
+            if beat.on_ghost_link_state then beat.on_ghost_link_state(context, state, event) end
+        end
+    end,
+
+    on_event_cinematic_started = function(context, state, event)
+        context:probe("cinematic started registry=" .. tostring(event.registry_key)
+            .. " slot=" .. tostring(event.slot_index) .. "/" .. tostring(event.slot_type))
+    end,
+
+    on_event_cinematic_terminated = function(context, state, event)
+        context:probe("cinematic terminated registry=" .. tostring(event.registry_key)
+            .. " slot=" .. tostring(event.slot_index) .. "/" .. tostring(event.slot_type))
+        for _, beat in ipairs(beats) do
+            if beat.on_cinematic_terminated then beat.on_cinematic_terminated(context, state, event) end
+        end
+    end,
+
+    on_event_cinematic_skip_requested = function(context, state, event)
+        context:probe("cinematic skip_requested registry=" .. tostring(event.registry_key))
+        for _, beat in ipairs(beats) do
+            if beat.on_cinematic_terminated then beat.on_cinematic_terminated(context, state, event) end
+        end
     end,
 }

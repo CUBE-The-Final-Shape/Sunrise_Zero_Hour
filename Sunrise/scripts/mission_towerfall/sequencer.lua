@@ -303,7 +303,7 @@ local function run_scene(context, step)
     end
     if mode == "full" or mode == "keys" then
         local keys = step.keys
-        if (not keys or keys == json.null or #keys == 0) then keys = M.scene_event_keys[symbol] end
+        if (not keys or keys == json.null or #keys == 0) then keys = M.scene_keys(context, symbol) end
         if keys and #keys > 0 then
             try(context, "scene keys " .. symbol, function()
                 context:slot(slot):set_scene_events{ generation = gen, events = keys } end)
@@ -389,7 +389,10 @@ local function run_step(context, name, step)
     elseif kind == "object" then M.set_door_object(context, step.slot, step.active ~= false, "seq " .. name)
     elseif kind == "device" then
         M.set_device_position(context, step.slot, tonumber(step.position) or 1.0, step.snap == true, "seq " .. name)
-    elseif kind == "directive" then M.set_directive(context, step.hash, step.label or "")
+    elseif kind == "directive" then
+        local progress = step.progress
+        if progress == json.null then progress = nil end
+        M.set_directive(context, step.hash, step.label or "", progress, step.raw == true)
     elseif kind == "sequence" then S.start(context, step.name, "sequence:" .. name)
     elseif kind == "clear" then
         M.track_clear(context, step.name or ("seq:" .. name), step.squads or {},

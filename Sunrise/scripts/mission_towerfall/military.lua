@@ -19,6 +19,20 @@ return function(M)
     M.register_scene("hangar_explosion_b", 0x80BEB7B5, {
         slot = "slot/80b5036a/00002b/002b/002b",
         scene = "symbol/80b500bc/0004/0000/80b5037e/28/000000/80b5036a/002b/002b" })
+    -- c and d are the same explosion record (configs 0x80B5027B / 0x80B50291 differ from a's only
+    -- by tag, name and point set: slot_008E / slot_008F, no squad, no door participant). c is
+    -- the blast that "opens" the first Amanda door, so the door is driven right after it.
+    M.register_scene("hangar_explosion_c", 0x80BEB7B5, {
+        slot = "slot/80b5036a/00002c/002c/002b",
+        scene = "symbol/80b500bc/0004/0000/80b5037e/28/000000/80b5036a/002c/002b" })
+    M.register_scene("hangar_explosion_d", 0x80BEB7B5, {
+        slot = "slot/80b5036a/00002d/002d/002b",
+        scene = "symbol/80b500bc/0004/0000/80b5037e/28/000000/80b5036a/002d/002b" })
+    -- The finale (config 0x80B50294) is a different resource with ten point sets
+    -- (ps_explosion_finale_a..f + slots 0x92-0x95/0x97-0x9A); graph and keys resolved live.
+    M.register_scene("hangar_explosion_finale", { resource = 0x80B82717 }, {
+        slot = "slot/80b5036a/00002e/002e/002b",
+        scene = "symbol/80b500bc/0004/0000/80b5037e/28/000000/80b5036a/002e/002b" })
 
     function B.on_spawn(context, state)
         M.set_directive(context, 0x432D2C95, "Find Zavala")
@@ -77,11 +91,17 @@ return function(M)
               M.spawn_squad_full(context, "sq_military_hallway_destruction", 3, HANGAR_AI)
               M.start_scene(context, "sc_military_hallway_destruction")
           end },
-        -- Past the pod: the first door opens and sq_hangar_overlook_b_b comes through it.
+        -- Past the pod: sc_explosion_c blows the first door, which opens with the blast
+        -- (EXPLOSION_C_DOOR_MS after it) with sq_hangar_overlook_b_b coming through it.
         { id = "pt_hangar_spawn_pod", raw = { registry_key = 0xAA9D42BE, slot_type = 60, slot_index = 228 },
           on_exit = function(context)
-              M.set_device_position(context, "d_gating_amanda_start", 1.0, false, "leaving pt_hangar_spawn_pod")
-              M.spawn_squad(context, "sq_hangar_overlook_b_b", HANGAR_AI)
+              M.start_scene(context, "hangar_explosion_c")
+              -- 0 = same tick as the blast (1200 and 400 ms were both seen as too late).
+              if B.EXPLOSION_C_DOOR_MS > 0 then
+                  context:start_timer("hangar_door_start_open", B.EXPLOSION_C_DOOR_MS)
+              else
+                  B.timers.hangar_door_start_open(context)
+              end
           end },
         -- In front of the second door: the Cabal command ship (cabal_destroyer, absent by
         -- default; addressed by full id, the bazaar has a cabal_destroyer_start too) and its
@@ -104,7 +124,10 @@ return function(M)
               M.set_door_object(context, "slot/80b5036a/00004f/004f/0004", true, "o_cabal_carrier_l")
               M.set_device_position(context, "slot/80b5036a/000050/0050/0017", 1.0, false, "d_cabal_carrier_r")
               M.set_device_position(context, "slot/80b5036a/000051/0051/0017", 1.0, false, "d_cabal_carrier_l")
-              M.set_device_position(context, "d_gating_amanda_hangar", 1.0, false, "at pt_amanda_skip")
+              -- Second door: sc_explosion_d as the blast (by symmetry with c -- unverified where
+              -- its point set slot_008F is), the door opening on it.
+              M.start_scene(context, "hangar_explosion_d")
+              context:start_timer("hangar_door_hangar_open", B.EXPLOSION_D_DOOR_MS)
               -- The six Cabal missiles that strike the hangar (o_cabal_missile_1..6, hangar copies
               -- slots 0x30-0x35): each is a type-4 object that flies in and hits on instantiation,
               -- so they are staggered 250ms apart instead of landing together.
@@ -158,7 +181,18 @@ return function(M)
           on_enter = function(context) M.start_scene(context, "hangar_explosion_b") end },
     }
 
+    -- Door delay after the blasts, tuned by eye.
+    B.EXPLOSION_C_DOOR_MS = 0
+    B.EXPLOSION_D_DOOR_MS = 1200
+
     B.timers = {
+        hangar_door_start_open = function(context)
+            M.set_device_position(context, "d_gating_amanda_start", 1.0, false, "after sc_explosion_c")
+            M.spawn_squad(context, "sq_hangar_overlook_b_b", HANGAR_AI)
+        end,
+        hangar_door_hangar_open = function(context)
+            M.set_device_position(context, "d_gating_amanda_hangar", 1.0, false, "after sc_explosion_d")
+        end,
         hangar_missile_1 = function(context) M.set_door_object(context, "slot/80b5036a/000030/0030/0004", true, "o_cabal_missile_1") end,
         hangar_missile_2 = function(context) M.set_door_object(context, "slot/80b5036a/000031/0031/0004", true, "o_cabal_missile_2") end,
         hangar_missile_3 = function(context) M.set_door_object(context, "slot/80b5036a/000032/0032/0004", true, "o_cabal_missile_3") end,

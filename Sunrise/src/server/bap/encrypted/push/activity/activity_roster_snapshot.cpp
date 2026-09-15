@@ -636,6 +636,14 @@ build_roster_snapshot(Session& session,
         region.index >= 0 ? static_cast<std::uint32_t>(region.index) : region.arrival;
     snapshot.spawnSetHash =
         state::activity::destination::attachable_spawn_set_hash(selection, fallback.spawnSetHash);
+    // A script-driven state transition names the spawn set of the region it moves the party to:
+    // select_state alone publishes none, and a state whose slice set declares no point then
+    // never places the player at all (the client waits for a spawn that never comes).
+    const std::uint32_t stateSpawn = state::activity::membership::region_spawn_hash(
+        session.activity.source.sessionId, region.index);
+    if (stateSpawn != 0) {
+        snapshot.spawnSetHash = stateSpawn;
+    }
     // An armed wipe respawns at its checkpoint spawn set, not at the arrival override.
     const std::uint32_t checkpoint = state::activity::membership::checkpoint_spawn_hash(
         session.activity.source.sessionId, region.index);

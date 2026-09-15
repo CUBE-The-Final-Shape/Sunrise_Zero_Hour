@@ -108,6 +108,8 @@ struct TypedIntent final {
     std::uint32_t actorCommandSelector{};
     /** Spawn set a checkpoint restart respawns at. */
     std::uint32_t checkpointSpawnHash{};
+    /** Authored spawn set a selected mission state arrives at; zero leaves the arrival alone. */
+    std::uint32_t stateSpawnHash{};
     /** Request key of the wipe a checkpoint release ends; zero arms one instead. */
     std::uint64_t checkpointReleaseRequest{};
     /** Authored effective region selected by the generated mission-state table. */
@@ -128,6 +130,13 @@ struct TypedIntent final {
     bool active{};
     /** A state transition may end its captured map-prop lifetimes before teleporting. */
     bool retirePlacedProps{};
+    /**
+     * Publish the state selection without moving the client. The seed the plan names then makes
+     * that state's behaviors findable from wherever the party stands, which is the only way to
+     * reach a cinematic state: its slice set declares no spawn point, so travelling there leaves
+     * the client waiting on a spawn that never comes.
+     */
+    bool stateWithoutTeleport{};
 };
 
 /** One durable action and the exact Host output revision assigned to it. */

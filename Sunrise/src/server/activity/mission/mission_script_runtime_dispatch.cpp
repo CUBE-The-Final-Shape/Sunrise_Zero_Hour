@@ -336,10 +336,39 @@ void dispatch_intent(RuntimeInstance& instance, std::uint64_t now) noexcept {
                 instance, kIntentStatusStateTransitionPending, "state_transition_pending");
             return;
         }
+        // The spawn set the party arrives at, validated against the destination's own spawn stem
+        // the way a checkpoint restart is: a hash that names no authored point would leave the
+        // client waiting on a spawn that never comes.
+        if (intent.stateSpawnHash != 0) {
+            namespace data = ::sunrise::state::build_data;
+            const auto& destination = instance.view.binding.destination;
+            const std::string_view package(
+                reinterpret_cast<const char*>(destination.packageName.data()),
+                destination.packageNameLength);
+            data::scenarios::Definition layout{};
+            data::spawn_sets::NameHash spawn{};
+            if (!data::find_scenario_layout(package, layout)
+                || !data::spawn_sets::find_hash({layout.spawnStem.data(), layout.spawnStemLength},
+                                                intent.stateSpawnHash,
+                                                spawn)
+                || spawn.pointCount == 0
+                || !::sunrise::state::activity::membership::set_region_spawn(
+                    instance.view.binding, intent.effectiveRegion, intent.stateSpawnHash)) {
+                refuse_delivery(instance,
+                                "state_refused",
+                                "spawn_set_unavailable",
+                                host::EffectOutcome::refused);
+                return;
+            }
+        }
         // A selected state names its own slice-set region. Until the client transitions there its
         // object registry comes from the loaded slice-set entry, so the new state's objects stay
-        // unfindable. Arming the host teleport is the only mid-activity move.
-        arm_state_region_teleport(instance, selected.plan);
+        // unfindable. Arming the host teleport is the only mid-activity move -- except for a
+        // state nothing can travel to (a cinematic state declares no spawn point), where the
+        // published seed alone makes its behaviors findable from where the party already stands.
+        if (!intent.stateWithoutTeleport) {
+            arm_state_region_teleport(instance, selected.plan);
+        }
         static_cast<void>(complete_local_effect(instance, "state_selected"));
         return;
     }

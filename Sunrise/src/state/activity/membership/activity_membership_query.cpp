@@ -166,6 +166,44 @@ std::uint32_t checkpoint_spawn_hash(std::uint64_t sessionId, std::int32_t region
     return result;
 }
 
+/** Stores the spawn set a script-driven transition wants for one region. */
+bool set_region_spawn(const SessionBinding& binding,
+                      std::int32_t region,
+                      std::uint32_t spawnSetHash) noexcept {
+    if (region < 0 || spawnSetHash == kInvalidSpawnSetHash) {
+        return false;
+    }
+    bool stored = false;
+    AcquireSRWLockExclusive(&runtime::storage::g_stateLock);
+    ActivityState& state = runtime::storage::g_state.activity;
+    const auto target = activity::transactions::find_session(state, binding.sessionId);
+    if (target != kInvalidSessionSlot
+        && state.sessions[target].createdRevision == binding.createdRevision) {
+        MembershipState& membership = state.sessions[target].membership;
+        membership.spawnRegion = spawnSetHash == 0 ? -1 : region;
+        membership.spawnRegionHash = spawnSetHash;
+        stored = true;
+    }
+    ReleaseSRWLockExclusive(&runtime::storage::g_stateLock);
+    return stored;
+}
+
+/** @return The spawn set a state transition named for this region, or zero. */
+std::uint32_t region_spawn_hash(std::uint64_t sessionId, std::int32_t region) noexcept {
+    std::uint32_t result = 0;
+    AcquireSRWLockShared(&runtime::storage::g_stateLock);
+    const ActivityState& state = runtime::storage::g_state.activity;
+    const auto target = activity::transactions::find_session(state, sessionId);
+    if (target != kInvalidSessionSlot) {
+        const MembershipState& membership = state.sessions[target].membership;
+        if (membership.spawnRegion >= 0 && membership.spawnRegion == region) {
+            result = membership.spawnRegionHash;
+        }
+    }
+    ReleaseSRWLockShared(&runtime::storage::g_stateLock);
+    return result;
+}
+
 /** Reports whether a host-named teleport is still waiting for the client to move. */
 bool host_teleport_armed(std::uint64_t sessionId) noexcept {
     if (sessionId == kAbsentSessionId) {

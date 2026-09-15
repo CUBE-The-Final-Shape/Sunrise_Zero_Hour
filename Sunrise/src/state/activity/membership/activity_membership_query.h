@@ -122,6 +122,21 @@ struct PendingMutation final {
                                                   std::int32_t region) noexcept;
 
 /**
+ * Names the authored spawn set the party arrives at when it enters one region, for a
+ * script-driven state transition. Replacing the pair is always accepted; it arms nothing and is
+ * read only while the published region matches.
+ * @param region Region the spawn set belongs to. @param spawnSetHash Authored set, zero clears.
+ * @return True when the session exists and the pair was stored.
+ */
+[[nodiscard]] bool set_region_spawn(const SessionBinding& binding,
+                                    std::int32_t region,
+                                    std::uint32_t spawnSetHash) noexcept;
+
+/** @return The spawn set a state transition named for this region, or zero. */
+[[nodiscard]] std::uint32_t region_spawn_hash(std::uint64_t sessionId,
+                                              std::int32_t region) noexcept;
+
+/**
  * @param sessionId Joined activity session.
  * @return True while a host-named teleport is armed and unspent.
  */

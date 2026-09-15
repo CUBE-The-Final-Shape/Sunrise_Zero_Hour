@@ -184,6 +184,15 @@ struct MembershipState final {
     TeleportState hostTeleport{};
     bool hasHostTeleport{};
     HardWipeState hardWipe{};
+    /**
+     * Authored spawn set the party arrives at when it next enters `spawnRegion`. A script-driven
+     * state transition names it, because `select_state` alone publishes no spawn hash and the
+     * client's picker then falls back to an arbitrary point (or, for a state whose slice set
+     * declares none, to no point at all -- an endless load). Unlike `hardWipe` this arms nothing
+     * on the client: it only answers the roster snapshot's per-region spawn question.
+     */
+    std::uint32_t spawnRegionHash{};
+    std::int32_t spawnRegion{-1};
     /** Region of the slice set the client holds; -1 while it holds none. */
     RegionState currentRegion{};
     /** Pending region leg as last reported; -1 once a transition has completed. */

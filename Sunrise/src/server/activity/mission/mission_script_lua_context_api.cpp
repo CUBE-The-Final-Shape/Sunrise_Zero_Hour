@@ -534,6 +534,23 @@ resolve_message_name(lua_State* state, std::string_view name, ActivityMessageDef
         }
         intent.retirePlacedProps = lua_toboolean(state, -1) != 0;
         lua_pop(state, 1);
+        // The authored spawn set the party arrives at. Without one the client picks an arbitrary
+        // point, and a state whose slice set declares none never places the player at all.
+        lua_getfield(state, 3, "no_teleport");
+        if (!lua_isnil(state, -1) && !lua_isboolean(state, -1)) {
+            return luaL_argerror(state, 3, "no_teleport must be a boolean");
+        }
+        intent.stateWithoutTeleport = lua_toboolean(state, -1) != 0;
+        lua_pop(state, 1);
+        lua_getfield(state, 3, "spawn_set_hash");
+        if (!lua_isnil(state, -1)) {
+            const lua_Integer hash = luaL_checkinteger(state, -1);
+            if (hash <= 0 || hash >= (std::numeric_limits<std::uint32_t>::max)()) {
+                return luaL_argerror(state, 3, "spawn_set_hash must be an authored spawn set");
+            }
+            intent.stateSpawnHash = static_cast<std::uint32_t>(hash);
+        }
+        lua_pop(state, 1);
     }
     return queue_intent(state, frame, intent);
 }

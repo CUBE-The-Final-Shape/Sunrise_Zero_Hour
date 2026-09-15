@@ -23,6 +23,9 @@ inline constexpr std::uint8_t kMaximumGrantBubble = 63;
 inline constexpr std::uint16_t kMinimumGrantToken = 1;
 /** Keys the client's top-level roster arrays hold. The wire count is wider and must be clamped. */
 inline constexpr std::size_t kTopLevelGroupCapacity = 256;
+
+/** Development diagnostic: names the validity check that refused the last encode, or nullptr. */
+[[nodiscard]] const char* last_validation_failure() noexcept;
 /**
  * Groups one host snapshot retains and publishes across the top-level and all bubble lists.
  * This bounds fixed host storage; only one bubble list is active in the client manager at a time.

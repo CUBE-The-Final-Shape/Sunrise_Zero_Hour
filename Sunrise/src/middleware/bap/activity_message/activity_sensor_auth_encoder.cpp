@@ -3,7 +3,21 @@
 #include "sensor_auth_update.h"
 
 namespace sunrise::middleware::bap::activity_message::sensor_auth_update {
+
+/** Development diagnostic: names the `valid()` check that refused the last snapshot. */
+const char* g_lastValidationFailure = nullptr;
+
+const char* last_validation_failure() noexcept {
+    return g_lastValidationFailure;
+}
+
 namespace {
+
+/** Records which check refused, so a refusal is diagnosable from the caller's log. */
+[[nodiscard]] bool refuse(const char* reason) noexcept {
+    g_lastValidationFailure = reason;
+    return false;
+}
 
 namespace bits = encoding::bits;
 
@@ -26,13 +40,13 @@ constexpr std::uint32_t kMaximumRegion = 0x7FFFFFFF;
  */
 [[nodiscard]] bool valid_sub_blocks(std::span<const BubbleSubBlock> subBlocks) noexcept {
     if (subBlocks.size() > kBubbleSubBlockCapacity) {
-        return false;
+        return refuse("sub_block_count");
     }
     for (std::size_t index = 0; index < subBlocks.size(); ++index) {
         const BubbleSubBlock& block = subBlocks[index];
         if (block.bubble > kMaximumSubBlockBubble || block.keys.empty()
             || block.keys.size() > kBubbleKeyCapacity) {
-            return false;
+            return refuse("sub_block_shape");
         }
         // The client's array holds one element per bubble, and its sweep walks every element that
         // matches. A repeated bubble would register the same keys twice in one apply.
@@ -67,13 +81,13 @@ constexpr std::uint32_t kMaximumRegion = 0x7FFFFFFF;
  */
 [[nodiscard]] bool valid_client_sets(const Roster& roster) noexcept {
     if (roster.topLevelGroupCount > kClientGroupCapacity) {
-        return false;
+        return refuse("top_level_capacity");
     }
     std::size_t topLevelRecords = 0;
     for (std::size_t index = 0; index < roster.topLevelGroupCount; ++index) {
         if (roster.groups[index].retired
             || !add_client_records(roster.groups[index].slotTypes.size(), topLevelRecords)) {
-            return false;
+            return refuse("top_level_records");
         }
     }
     std::array<bool, kPublishedGroupCapacity> referenced{};
@@ -89,21 +103,21 @@ constexpr std::uint32_t kMaximumRegion = 0x7FFFFFFF;
                     continue;
                 }
                 if (matched != roster.groupCount) {
-                    return false;
+                    return refuse("subkey_ambiguous");
                 }
                 matched = index;
             }
-            if (matched == roster.groupCount) return false;
+            if (matched == roster.groupCount) return refuse("subkey_unmatched");
             if (!roster.groups[matched].retired
                 && (++activeGroups > kClientGroupCapacity
                     || !add_client_records(roster.groups[matched].slotTypes.size(), activeRecords)))
-                return false;
+                return refuse("client_set_capacity");
             referenced[matched] = true;
         }
     }
     for (std::size_t index = roster.topLevelGroupCount; index < roster.groupCount; ++index) {
         if (!referenced[index]) {
-            return false;
+            return refuse("group_unreferenced");
         }
     }
     return true;
@@ -116,50 +130,50 @@ constexpr std::uint32_t kMaximumRegion = 0x7FFFFFFF;
  */
 [[nodiscard]] bool valid(const Snapshot& snapshot) noexcept {
     if (snapshot.lifetime > kMaximumLifetimeState) {
-        return false;
+        return refuse("lifetime");
     }
     if (snapshot.hasRegion && snapshot.region > kMaximumRegion) {
-        return false;
+        return refuse("region");
     }
     if (snapshot.hasSpawnOverride
         && (snapshot.spawnSliceSet > kMaximumSpawnSliceSet || snapshot.spawnSetHash == 0
             || snapshot.spawnSetHash == kAbsentSpawnSetHash)) {
-        return false;
+        return refuse("spawn_override");
     }
     if (snapshot.stateSequence > kMaximumStateSequence) {
-        return false;
+        return refuse("state_sequence");
     }
     // The grant is a change, not a value: the client compares it against a mirror that starts at
     // zero, so a token of zero grants nothing.
     if (snapshot.hasGrant
         && (snapshot.grant.bubble > kMaximumGrantBubble
             || snapshot.grant.token < kMinimumGrantToken)) {
-        return false;
+        return refuse("grant");
     }
     if (snapshot.roster.groupCount > kPublishedGroupCapacity
         || snapshot.roster.topLevelGroupCount > snapshot.roster.groupCount
         || snapshot.roster.topLevelGroupCount > kTopLevelGroupCapacity
         || snapshot.authOverrides.size() > kAuthOverrideCapacity
         || !valid_sub_blocks(snapshot.roster.bubbleSubBlocks)) {
-        return false;
+        return g_lastValidationFailure == nullptr ? refuse("roster_capacity") : false;
     }
     for (std::size_t group = 0; group < snapshot.roster.groupCount; ++group) {
         const Group& row = snapshot.roster.groups[group];
         if (row.slotTypes.size() != row.slotFlags.size()
             || row.slotTypes.size() != row.slotIndices.size() || row.slotTypes.empty()
             || (row.hasStateSequence && row.stateSequence > kMaximumStateSequence)) {
-            return false;
+            return refuse("group_slots");
         }
         for (std::size_t earlier = 0; earlier < group; ++earlier) {
             if (snapshot.roster.groups[earlier].key == row.key) {
-                return false;
+                return refuse("group_key_repeat");
             }
         }
         // An index past the field's range wraps into another slot's, which seeds the wrong
         // object rather than refusing.
         for (const std::uint16_t index : row.slotIndices) {
             if (index > kMaximumSlotIndex) {
-                return false;
+                return refuse("slot_index");
             }
         }
     }
@@ -171,13 +185,13 @@ constexpr std::uint32_t kMaximumRegion = 0x7FFFFFFF;
         // consistency is checked, which no encoder owns.
         if (!value.present || value.byteCount != requiredBytes
             || requiredBytes > value.body.size()) {
-            return false;
+            return refuse("auth_body");
         }
         for (std::size_t earlier = 0; earlier < index; ++earlier) {
             const AuthOverride& prior = snapshot.authOverrides[earlier];
             if (prior.objectTag == value.objectTag && prior.key == value.key
                 && prior.slotType == value.slotType && prior.slotIndex == value.slotIndex) {
-                return false;
+                return refuse("auth_override_repeat");
             }
         }
         std::size_t matches = 0;
@@ -195,23 +209,23 @@ constexpr std::uint32_t kMaximumRegion = 0x7FFFFFFF;
             }
         }
         if (matches != 1) {
-            return false;
+            return refuse("auth_override_unmatched");
         }
     }
     if (snapshot.senseOverrides.size() > kAuthOverrideCapacity) {
-        return false;
+        return refuse("sense_capacity");
     }
     for (std::size_t index = 0; index < snapshot.senseOverrides.size(); ++index) {
         const SenseOverride& value = snapshot.senseOverrides[index];
         if (value.bitCount == 0 || value.byteCount != (value.bitCount + 7U) / 8U
             || value.byteCount > value.body.size()) {
-            return false;
+            return refuse("sense_body");
         }
         for (std::size_t earlier = 0; earlier < index; ++earlier) {
             const SenseOverride& prior = snapshot.senseOverrides[earlier];
             if (prior.objectTag == value.objectTag && prior.key == value.key
                 && prior.slotType == value.slotType && prior.slotIndex == value.slotIndex) {
-                return false;
+                return refuse("sense_override_repeat");
             }
         }
         std::size_t matches = 0;
@@ -229,7 +243,7 @@ constexpr std::uint32_t kMaximumRegion = 0x7FFFFFFF;
             }
         }
         if (matches != 1) {
-            return false;
+            return refuse("sense_override_unmatched");
         }
     }
     return valid_client_sets(snapshot.roster);
@@ -313,7 +327,11 @@ bool encode_sensor_auth_update(const Snapshot& snapshot,
                                std::span<std::byte> output,
                                std::size_t& written) noexcept {
     written = 0;
-    if (output.empty() || !valid(snapshot)) {
+    g_lastValidationFailure = "unreported";
+    if (output.empty()) {
+        return refuse("output_empty");
+    }
+    if (!valid(snapshot)) {
         return false;
     }
 
@@ -321,14 +339,26 @@ bool encode_sensor_auth_update(const Snapshot& snapshot,
     // does not fit would leave a partial one behind.
     bits::Writer measure = bits::Writer::measuring();
     std::size_t required = 0;
-    if (!write_body(measure, snapshot) || !measure.finish(required) || required > output.size()) {
-        return false;
+    if (!write_body(measure, snapshot)) {
+        return refuse("measure_write");
+    }
+    if (!measure.finish(required)) {
+        return refuse("measure_finish");
+    }
+    if (required > output.size()) {
+        return refuse("body_too_large");
     }
 
     bits::Writer writer(output);
     std::size_t produced = 0;
-    if (!write_body(writer, snapshot) || !writer.finish(produced) || produced != required) {
-        return false;
+    if (!write_body(writer, snapshot)) {
+        return refuse("write");
+    }
+    if (!writer.finish(produced)) {
+        return refuse("write_finish");
+    }
+    if (produced != required) {
+        return refuse("size_mismatch");
     }
     written = produced;
     return true;

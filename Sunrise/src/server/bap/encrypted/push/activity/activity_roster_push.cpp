@@ -452,7 +452,53 @@ bool append_roster_notification(
         && stagedMissionSeed.bindingGeneration == session.activity.bindingGeneration
         && stagedMissionSeed.revision != stagedMissionSeed.publishedRevision
         && !stagedMissionSeed.regionArrivalPending;
+    // Development diagnostic: the mission-seed lease can stall with revision != published and no
+    // push carrying it. Printing every term of `missionSeedPending` says which one is false.
+    {
+        std::array<char, 200> seedLine{};
+        const int seedWritten = std::snprintf(
+            seedLine.data(),
+            seedLine.size(),
+            "ev=activity stage=seed_terms configured=%d gen_match=%d revision=%llu published=%llu "
+            "arrival=%d pending=%d lease_gen=%llu session_gen=%llu",
+            stagedMissionSeed.configured ? 1 : 0,
+            stagedMissionSeed.bindingGeneration == session.activity.bindingGeneration ? 1 : 0,
+            static_cast<unsigned long long>(stagedMissionSeed.revision),
+            static_cast<unsigned long long>(stagedMissionSeed.publishedRevision),
+            stagedMissionSeed.regionArrivalPending ? 1 : 0,
+            missionSeedPending ? 1 : 0,
+            static_cast<unsigned long long>(stagedMissionSeed.bindingGeneration),
+            static_cast<unsigned long long>(session.activity.bindingGeneration));
+        if (seedWritten > 0) {
+            core::log::write(core::log::Channel::server,
+                             core::log::Level::warn,
+                             {seedLine.data(), static_cast<std::size_t>(seedWritten)});
+        }
+    }
     bool encoded = message::encode_sensor_auth_update(snapshot, scratch.responseBody, messageSize);
+    if (!encoded) {
+        // Development diagnostic: a refused body is reported as `encodeFailed` with no reason,
+        // and a mission-seed revision riding that body then never publishes.
+        const char* const reason =
+            middleware::bap::activity_message::sensor_auth_update::last_validation_failure();
+        std::array<char, 160> encodeLine{};
+        const int encodeWritten =
+            std::snprintf(encodeLine.data(),
+                          encodeLine.size(),
+                          "ev=activity stage=roster_encode result=refused reason=%s groups=%zu "
+                          "top=%zu sub=%zu auth=%zu region=%u",
+                          reason == nullptr ? "(body_shape)" : reason,
+                          snapshot.roster.groupCount,
+                          snapshot.roster.topLevelGroupCount,
+                          snapshot.roster.bubbleSubBlocks.size(),
+                          snapshot.authOverrides.size(),
+                          snapshot.region);
+        if (encodeWritten > 0) {
+            core::log::write(core::log::Channel::server,
+                             core::log::Level::warn,
+                             {encodeLine.data(), static_cast<std::size_t>(encodeWritten)});
+        }
+    }
     const bool hasRetirement =
         encoded && allowEntityRetirement
         && (placedRetirementPending || (snapshot.hasGrant && enteringBubble))

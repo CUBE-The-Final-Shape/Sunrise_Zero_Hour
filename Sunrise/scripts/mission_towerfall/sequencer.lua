@@ -8,6 +8,7 @@
 --       "start": { "kind": "trigger_enter" | "trigger_exit" | "squads_clear" | "sequence_end"
 --                          | "spawn" | "manual",
 --                  "name": "pt_x" | "registry_key": n, "slot_type": 60, "slot_index": n,
+--                  "region": n (arm the volume only while the client holds that region),
 --                  "squads": [ "sq_a", ... ], "sequence": "other" },
 --       "steps": [ { "delay_ms": 1000, "kind": "cue", "cue": 52 }, ... ] } ] }
 -- Step kinds and their fields:
@@ -161,6 +162,7 @@ function S.install(context, hot)
             -- disabled: no watch, no clear tracker
         elseif start.kind == "trigger_enter" or start.kind == "trigger_exit" then
             local w = { id = "seq:" .. name, once = def.once }
+            if start.region and start.region ~= json.null then w.region = start.region end
             if start.registry_key and start.registry_key ~= json.null then
                 w.raw = { registry_key = start.registry_key, slot_type = start.slot_type or 60,
                           slot_index = start.slot_index }

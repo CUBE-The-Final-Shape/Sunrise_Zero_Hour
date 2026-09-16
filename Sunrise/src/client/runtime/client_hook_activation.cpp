@@ -20,6 +20,7 @@
 #include "../hooks/bitmap/bitmap_hook_lifecycle.h"
 #include "../hooks/bootflow/bootflow_hook_lifecycle.h"
 #include "../hooks/cine_auth_probe/cine_auth_probe.h"
+#include "../hooks/directive_probe/directive_probe.h"
 #include "../hooks/mission_effect_probe/mission_effect_probe.h"
 #include "../hooks/cine_probe/cine_probe.h"
 #include "../hooks/config_getter/config_getter_lifecycle.h"
@@ -220,6 +221,9 @@ void clear_game_targets() noexcept {
     // Read-only. Logs each processed type-26 mission effect body, its filter reference, and the
     // entities that filter selected with the attach outcome of each.
     (void)hooks::mission_effect_probe::install();
+    // Read-only. Logs each directive lane the client turns into a HUD entry, and the display
+    // state it produced, once per change per sensor component.
+    (void)hooks::directive_probe::install();
     // Retains the native handle for package placements without publishing unnamed map objects.
     (void)hooks::world_objects::install();
     // The server reports investment publications through these and never calls the Client.

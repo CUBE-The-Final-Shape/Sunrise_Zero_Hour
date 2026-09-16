@@ -64,7 +64,8 @@ return function(M)
     B.watches = {
         -- Entering the boulevard from the plaza (registry 0xBB7B62E0, volume 7, x -59..-37 /
         -- y -33..-18): the victims are placed before the door if the mission comes from the plaza.
-        { id = "pt_goto_boulevard", raw = { registry_key = 0xBB7B62E0, slot_type = 60, slot_index = 7 },
+        -- Crossed on the way out of the plaza, before this region is even requested.
+        { id = "pt_goto_boulevard", region = false, raw = { registry_key = 0xBB7B62E0, slot_type = 60, slot_index = 7 },
           on_enter = function(context) context:probe("blvd: pt_goto_boulevard entered") end },
         -- pt_start_ikora (0x7BA8F95D volume 55, x -75..-55 / y 26..37): key 2 starts Ikora's
         -- whole entrance (key 1 alone does nothing visible); keys 3-10 still to identify
@@ -99,11 +100,11 @@ return function(M)
           on_enter = function(context)
               M.spawn_squad(context, "sq_bazaar_a_c", BAZAAR_AI)
               M.play_cue(context, 75)
-              -- sq_bazaar_a_c is placed normally (its rule is its own spawner config), so its
-              -- alive_count is trustworthy: the default 1.5 s confirmation is pure delay here and
-              -- the finale arrived visibly late. One poll tick still absorbs a stray zero.
-              M.track_clear(context, "blvd_a_c", { "sq_bazaar_a_c" }, function(ctx) B.finale(ctx) end,
-                            { confirm_ms = 300 })
+              -- The finale comes once everything placed so far is dead, read from the
+              -- objective's kill counter. alive_count is not a signal: a_c reported 3 then 0
+              -- within 0.3 s of its placement and the finale spawned with a_c untouched.
+              B.wait_kills(context, "finale spawn", B.KILLS_BEFORE_FINALE,
+                           function(ctx) B.finale(ctx) end)
           end },
     }
 
@@ -111,8 +112,8 @@ return function(M)
     -- rule sr_boulevard_finale differs from its spawner -- plain placement first).
     function B.finale(context)
         M.spawn_squad_full(context, "sq_bazaar_finale", 1, BAZAAR_AI)
-        -- Two members, counted on the objective: alive_count fired before the squad was dead.
-        B.wait_kills(context, "finale", B.FINALE_MEMBERS, function(ctx) B.holliday(ctx) end)
+        B.wait_kills(context, "finale", B.KILLS_BEFORE_FINALE + B.FINALE_MEMBERS,
+                     function(ctx) B.holliday(ctx) end)
     end
 
     -- End of the bazaar: Holliday's Hawk arrives (o_hawk_1; _2/_3 are the other players'
@@ -193,29 +194,54 @@ return function(M)
         -- The door opens on the objective's kill counter (obj_bazaar, slot 1): a pod squad's
         -- alive_count flickers to 0 right after landing and its living members never report
         -- again, so the clear tracker opened the door early.
-        B.wait_kills(context, "pod", 3, function(ctx) B.open_bazaar(ctx) end)
+        B.wait_kills(context, "pod", B.POD_MEMBERS, function(ctx) B.open_bazaar(ctx) end)
     end
 
-    -- Waits for `wanted` further kills on obj_bazaar, then runs `fn`. A squad that arrives in a
-    -- pod reports alive_count 0 transiently right after landing and its living members never
-    -- report again, so M.track_clear fires early on those; the objective's kill counter does not.
+    -- Everything in the bazaar is placed on obj_bazaar, so its kill counter, summed over the
+    -- whole beat, says how much of what was placed is dead: the door at 3 (the pod), the finale
+    -- once everything before it is gone, Holliday once the finale is. This is the plaza's method.
+    -- Neither per-squad signal works here: alive_count flickers to zero right after a placement
+    -- (a_c 0.3 s in, the finale 5 s in) and reports the same death several times, and a kill on
+    -- the objective names no squad -- read per squad, a_a's last death and a_c's first opened
+    -- the ending with a_c still standing.
+    B.POD_MEMBERS = 3
+    B.KILLS_BEFORE_FINALE = 3 + 2 + 4 + 3 -- pod, a_b, a_a, a_c
+    B.kills_total = 0
+
+    -- Runs `fn` once the beat's kill total reaches `wanted`.
     function B.wait_kills(context, label, wanted, fn)
-        B.kill_label, B.kill_base, B.kill_wanted, B.kill_fn = label, nil, wanted, fn
+        B.kill_label, B.kill_wanted, B.kill_fn = label, wanted, fn
+        B.try_kills(context)
     end
 
-    -- objective_progress on obj_bazaar (type 3, index 1) is cumulative over the mission: the
-    -- first report after arming sets the base.
+    function B.try_kills(context)
+        if not B.kill_wanted or B.kills_total < B.kill_wanted then return end
+        local fn = B.kill_fn
+        B.kill_wanted, B.kill_fn = nil, nil
+        fn(context)
+    end
+
+    -- objective_progress on obj_bazaar (type 3, index 1) carries one counter PER task group and
+    -- per lane (`objective` is the block, `task` the lane): a squad the AI moves to another group
+    -- mid-fight has its later kills reported under that group's counter, from 1 again. So a kill
+    -- is the delta of the counter it arrived on (`previous_task_count` -> `task_count`), summed
+    -- across every counter, never one counter's absolute value: read as one number, the finale's
+    -- two deaths came in as 1/2, 1/2, 1/2 on three different counters and the Hawk never came.
     function B.on_objective_progress(context, state, event)
-        if event.slot_type ~= 3 or event.slot_index ~= 1 or not B.kill_wanted then return end
-        local count = event.task_count or 0
-        if B.kill_base == nil then B.kill_base = (event.previous_task_count or (count - 1)) end
-        local kills = count - B.kill_base
-        context:probe(string.format("blvd: %s kills %d/%d", B.kill_label, kills, B.kill_wanted))
-        if kills >= B.kill_wanted then
-            local fn = B.kill_fn
-            B.kill_wanted, B.kill_fn = nil, nil
-            fn(context)
+        -- obj_bazaar is index 1 of the boulevard registry; the hangar's objective is index 1 of
+        -- its own, so the registry is part of the match.
+        if event.registry_key ~= 0x7BA8F95D or event.slot_type ~= 3 or event.slot_index ~= 1 then
+            return
         end
+        local count = event.task_count or 0
+        local previous = event.previous_task_count or (count - 1)
+        local delta = count - previous
+        if delta <= 0 then return end
+        B.kills_total = B.kills_total + delta
+        context:probe(string.format("blvd: kills %d (block %s task %s)%s", B.kills_total,
+            tostring(event.objective), tostring(event.task),
+            B.kill_wanted and string.format(", %s at %d", B.kill_label, B.kill_wanted) or ""))
+        B.try_kills(context)
     end
 
     -- The bazaar door (d_door_bazaar) opens on an Incendior: sq_flame is sc_pyro_intro's only

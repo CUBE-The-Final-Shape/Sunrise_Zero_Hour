@@ -89,6 +89,13 @@ return function(M)
         context:start_timer("sky_first_directive", B.SPAWN_DIRECTIVE_MS)
     end
 
+    -- Reached from the boulevard through the mid cinematic: the same opening as a launch here.
+    -- The HUD comes up empty -- "Board the command ship" is done -- until the first directive.
+    function B.on_arrive(context, state)
+        M.last_directive = nil
+        B.on_spawn(context, state)
+    end
+
     ----------------------------------------------------------------------------------------
     -- Ship entry, the console, and the shield
     ----------------------------------------------------------------------------------------

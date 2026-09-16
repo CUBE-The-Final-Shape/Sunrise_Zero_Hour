@@ -78,6 +78,8 @@ struct Sequence final {
     std::uint32_t registryKey{};
     std::uint32_t slotType{60};
     std::uint32_t slotIndex{};
+    /** Region the trigger start is armed in, or -1 to arm it at mission start. */
+    int startRegion{-1};
     std::vector<std::string> startSquads{};
     std::vector<Step> steps{};
 };
@@ -166,6 +168,11 @@ std::string serialize(const Document& document) {
                 out += ", ";
                 write_key(out, "slot_index");
                 write_uint(out, sequence.slotIndex);
+            }
+            if (sequence.startRegion >= 0) {
+                out += ", ";
+                write_key(out, "region");
+                write_uint(out, static_cast<std::uint32_t>(sequence.startRegion));
             }
         } else if (startKind == "squads_clear") {
             out += ", ";
@@ -555,6 +562,7 @@ bool deserialize(std::string_view text, Document& document, std::string& error) 
             sequence.registryKey = static_cast<std::uint32_t>(start->num("registry_key"));
             sequence.slotType = static_cast<std::uint32_t>(start->num("slot_type", 60));
             sequence.slotIndex = static_cast<std::uint32_t>(start->num("slot_index"));
+            sequence.startRegion = static_cast<int>(start->num("region", -1.0));
             if (const Value* squads = start->get("squads"); squads != nullptr && squads->type == Value::Type::array) {
                 for (const Value& squad : squads->array) {
                     if (squad.type == Value::Type::string) {
@@ -1063,6 +1071,15 @@ void draw_start(Sequence& sequence) {
         if (ImGui::SmallButton("Clear identity")) {
             sequence.registryKey = 0;
             sequence.slotIndex = 0;
+            g_dirty = true;
+        }
+        // An activity-level volume is resident from the start and can be crossed far from its
+        // beat, so a start can wait for the client to hold the beat's region before arming.
+        ImGui::SetNextItemWidth(120.0F);
+        if (ImGui::InputInt("Arm in region (-1 = at start)", &sequence.startRegion)) {
+            if (sequence.startRegion < -1) {
+                sequence.startRegion = -1;
+            }
             g_dirty = true;
         }
     } else if (kind == "squads_clear") {

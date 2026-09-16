@@ -5,7 +5,7 @@
 -- (Military/hangar), 48 = bubble 6 (plaza), 0 = bubble 0 (boulevard/bazaar), 64 = bubble 8 (the
 -- Cabal command ship). Slice-set/region indices from the generated SDK's state table. Starting in
 -- a later bubble installs only that bubble's beats and the following ones.
-local START_REGION = 72
+local START_REGION = 48
 -- Authored spawn set the launch arrives at, or nil for the client's own pick. The destination
 -- declares seven, and a set is declared per MAP bubble, so several beats share one: 0x2EA8FB98 is
 -- the "Default" (where the mid cinematic puts the player down, and the only one bubble 1 offers),
@@ -32,7 +32,7 @@ for _, beat in ipairs(MISSION_ORDER) do
     if started then beats[#beats + 1] = beat end
 end
 for _, beat in ipairs(beats) do
-    if beat.watches then M.add_watches(beat.watches) end
+    if beat.watches then M.add_watches(beat.watches, beat.region) end
     if beat.timers then M.add_timers(beat.timers) end
 end
 
@@ -131,6 +131,19 @@ return {
         local okb, step = pcall(function() return context:bootflow_step() end)
         local hot = okb and step == IN_WORLD_STEP
         if SEQ.load(context, state) then SEQ.install(context, hot) end
+        -- A newly held region releases and re-arms its watches: the arming loop runs again.
+        M.on_region_refresh = function(ctx) ctx:start_timer(WATCH_TIMER, 0) end
+        -- A beat reached by transition rather than on foot (the ship, after the mid cinematic)
+        -- runs its arrival once, the way the start beat runs its spawn.
+        M.on_region_arrive = function(ctx, st, region)
+            for _, beat in ipairs(beats) do
+                if beat.on_arrive and beat.region == region and not beat.arrived
+                   and beat.region ~= START_REGION then
+                    beat.arrived = true
+                    beat.on_arrive(ctx, st)
+                end
+            end
+        end
         context:start_timer(WATCH_TIMER, 0)
         poll(context, state)
     end,
@@ -197,7 +210,8 @@ return {
     on_event_client_state_changed = function(context, state, event)
         local held = event.held_region_index
         local current = event.current_region_index
-        M.note_client_region(context, held, current)
+        M.note_requested_region(context, event.region_index)
+        M.note_client_region(context, held, current, state, event.region_index)
         if held ~= M.last_held_region or current ~= M.last_current_region then
             M.last_held_region, M.last_current_region = held, current
             context:probe(string.format("client_state held=%s current=%s requested=%s spawn=%s teleport=%s",

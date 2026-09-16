@@ -5,7 +5,7 @@
       "name": "zavala_spawn",
       "enabled": true,
       "once": true,
-      "start": { "kind": "trigger_enter", "name": "pt_plaza_spawn_init", "registry_key": 4177091021, "slot_type": 60, "slot_index": 38 },
+      "start": { "kind": "trigger_enter", "name": "pt_plaza_spawn_init", "registry_key": 4177091021, "slot_type": 60, "slot_index": 38, "region": 48 },
       "steps": [
         { "delay_ms": 0, "kind": "pose", "cell": "sq_zavala__banshee", "group": 2947619346, "action": 1090273498, "new_generation": true, "sends": 2 },
         { "delay_ms": 0, "kind": "scene", "scene": "sc_zavala", "slot": "slot/80b50746/000002/0002/002b", "mode": "full", "new_generation": true, "keys": [3099967653] }
@@ -15,17 +15,16 @@
       "name": "plaza_defend",
       "enabled": true,
       "once": true,
-      "start": { "kind": "trigger_enter", "name": "pt_defend", "registry_key": 3145425632, "slot_type": 60, "slot_index": 23 },
+      "start": { "kind": "trigger_enter", "name": "pt_defend", "registry_key": 3145425632, "slot_type": 60, "slot_index": 23, "region": 48 },
       "steps": [
-        { "delay_ms": 0, "kind": "directive", "hash": 3138637972, "label": "Defend the Tower" },
-        { "delay_ms": 2000, "kind": "directive", "hash": 594636262, "label": "Assault repelled 0/3", "raw": true, "progress": [0, 3] }
+        { "delay_ms": 0, "kind": "directive", "hash": 594636262, "label": "Assault repelled 0/3", "raw": true, "progress": [0, 3] }
       ]
     },
     {
       "name": "plaza_loop",
       "enabled": true,
       "once": true,
-      "start": { "kind": "trigger_enter", "name": "pt_zavala_loop", "registry_key": 4177091021, "slot_type": 60, "slot_index": 39 },
+      "start": { "kind": "trigger_enter", "name": "pt_zavala_loop", "registry_key": 4177091021, "slot_type": 60, "slot_index": 39, "region": 48 },
       "steps": [
         { "delay_ms": 0, "kind": "scene", "scene": "sc_fake_shield", "slot": "slot/80b50616/000003/0003/002b", "mode": "full", "new_generation": true, "resource": 2159552251 },
         { "delay_ms": 2000, "kind": "squad", "squad": "squad_kill_cabal_1", "count": 1, "objective": "slot/80b50746/000009/0009/0003", "hold": true },

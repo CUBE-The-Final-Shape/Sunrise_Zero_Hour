@@ -279,7 +279,11 @@ end
 -- `element` selects which authored element of the hash to show: a directive may declare several,
 -- and the progress-counter variant is often not element 0 (Overload the generator: element 1
 -- carries "Exhaust turbines destroyed x of 3").
+M.last_directive = nil -- what the HUD should show, for the next region's own sensor instance
+
 function M.set_directive(context, name_hash, label, progress, raw, element)
+    M.last_directive = { name_hash = name_hash, label = label, progress = progress, raw = raw,
+                         element = element }
     local ok, err = pcall(function()
         context:slot(1):set_directive{ directive = { slot_row = 17312, name_hash = name_hash,
                                                      element = element or 0 },
@@ -508,19 +512,39 @@ end
 -- watch (`once`, the default) is released right after it fires.
 M.watches = {}
 
-function M.add_watches(list)
+-- `region` is the beat's region: its watches are armed while the client holds or requests that
+-- region and released otherwise. A watch may name its own (`region = n`) or opt out
+-- (`region = false`) when it is crossed from the neighbouring region.
+function M.add_watches(list, region)
     for _, w in ipairs(list) do
         w.armed = false
         w.volume = nil
         if w.once == nil then w.once = true end
+        if w.region == nil then w.region = region end
+        if w.region == false then w.region = nil end
         M.watches[#M.watches + 1] = w
     end
+end
+
+M.region_requested = nil -- region the client last reported heading for
+
+-- A gated watch belongs where the client is or is about to be. `held` lags the player by
+-- seconds at a border (pt_start_big_ship fired 10 s before region 0 was reported held), and the
+-- client names the next region as requested well ahead, so both count.
+local function watch_region_live(w)
+    return w.region == nil or w.region == M.region or w.region == M.region_requested
 end
 
 function M.try_arm_watches(context)
     local all_armed = true
     for _, w in ipairs(M.watches) do
-        if not w.armed then
+        -- A watch gated on a region waits until the client holds it. An activity-level volume
+        -- is resident from the start and can be crossed far from its beat (tv_defend is tall
+        -- enough to take in the Shaxx hallway beneath the plaza), so arming it early fires it
+        -- there, and a one-shot watch is then gone for its real crossing.
+        if not w.armed and not watch_region_live(w) then
+            all_armed = false
+        elseif not w.armed then
             local ok, armed, vreg, vtype, vidx
             if w.raw then
                 ok, armed, vreg, vtype, vidx = pcall(function()
@@ -568,6 +592,75 @@ function M.release_watch(context, w)
         return context:slot(w.id):unwatch_trigger()
     end)
     context:probe("release_watch(" .. w.id .. ") ok=" .. tostring(ok) .. " released=" .. tostring(released))
+end
+
+-- Releases and arms again every watch that is armed and still owed a crossing, so the client
+-- resolves its volume afresh. An entry armed while its region was not streamed, or streamed and
+-- since reloaded, keeps a resolution that no longer exists: it reports as armed and never
+-- fires (pt_start_ikora armed at a plaza spawn, every sky_battle watch after the cinematic --
+-- both fired the moment they were re-armed by hand).
+local function unwatch(context, w)
+    if w.raw then
+        pcall(function()
+            context:unwatch_trigger_identity(w.raw.registry_key, w.raw.slot_type, w.raw.slot_index)
+        end)
+    else
+        pcall(function() context:slot(w.id):unwatch_trigger() end)
+    end
+    w.armed = false
+    w.volume = nil
+end
+
+-- Every armed watch still owed a crossing is released; the live ones are then armed again by
+-- the loop, the others stay released until their region comes up. Returns re-armed, released.
+function M.rearm_watches(context)
+    local rearmed, released = 0, 0
+    for _, w in ipairs(M.watches) do
+        if w.armed and not w.released and not (w.once and w.fired) then
+            unwatch(context, w)
+            if watch_region_live(w) then rearmed = rearmed + 1 else released = released + 1 end
+        end
+    end
+    return rearmed, released
+end
+
+-- A region the client newly holds is a fresh set of instances: its trigger volumes have to be
+-- resolved again, and its directive sensor knows nothing sent before it existed (the HUD came
+-- up empty in the boulevard after "Leave the Plaza", and stale after a full run). Both are put
+-- back here; the root re-runs the arming loop through M.on_region_refresh.
+M.on_region_refresh = nil
+-- Called first with the region just taken: a beat entered by transition (not on foot) runs its
+-- arrival here, and may drop M.last_directive when the HUD should come up empty.
+M.on_region_arrive = nil
+function M.refresh_region(context, region, state)
+    local rearmed, released = M.rearm_watches(context)
+    if M.on_region_arrive then M.on_region_arrive(context, state, region) end
+    local d = M.last_directive
+    if d then M.set_directive(context, d.name_hash, d.label, d.progress, d.raw, d.element) end
+    context:probe(string.format("region %d held: %d watch(es) re-armed, %d released, directive %s",
+        region, rearmed, released, d and d.label or "none"))
+    if M.on_region_refresh then M.on_region_refresh(context) end
+end
+
+-- The client named the region it is heading for: that region's watches become live -- and the
+-- ones already armed are armed AGAIN. Each time a neighbouring region is requested it is loaded
+-- afresh (the plaza requests 32 and 0 in turn, every few seconds), and an entry resolved on an
+-- earlier load no longer reports: pt_start_ikora, armed on the first request of region 0, was
+-- crossed right after the door and never fired. The entry has to follow the latest load.
+function M.note_requested_region(context, requested)
+    if requested == nil or requested == M.region_requested then return end
+    M.region_requested = requested
+    local rearmed = 0
+    for _, w in ipairs(M.watches) do
+        if w.region == requested and w.armed and not w.released and not (w.once and w.fired) then
+            unwatch(context, w)
+            rearmed = rearmed + 1
+        end
+    end
+    if rearmed > 0 then
+        context:probe(string.format("region %d requested: %d watch(es) re-armed", requested, rearmed))
+    end
+    if M.on_region_refresh then M.on_region_refresh(context) end
 end
 
 -- Routes one crossing to the watch it belongs to. resolved_object_id doubles as the enter/exit
@@ -651,10 +744,31 @@ end
 
 -- Fed from on_event_client_state_changed. A settle-only delta omits the region fields, which
 -- does not mean the player left, so only a reported value updates anything.
-function M.note_client_region(context, held, current)
+-- The client settles a few seconds after taking a region (a report with the region held and
+-- nothing requested), and the region's objects are instantiated a second time in between: an
+-- entry armed at the take points at the first set. So the held region's watches are armed once
+-- more at the settle. (Armed by hand well after it, the same entry fired at once.)
+M.region_settled = nil
+function M.note_client_region(context, held, current, state, requested)
     local region = held or current
     if region == nil then return end
+    local changed = M.region ~= region
     M.region = region
+    if changed then
+        M.region_settled = nil
+        M.refresh_region(context, region, state)
+    elseif held ~= nil and requested == nil and M.region_settled ~= region then
+        M.region_settled = region
+        local rearmed = 0
+        for _, w in ipairs(M.watches) do
+            if w.region == region and w.armed and not w.released and not (w.once and w.fired) then
+                unwatch(context, w)
+                rearmed = rearmed + 1
+            end
+        end
+        context:probe(string.format("region %d settled: %d watch(es) re-armed", region, rearmed))
+        if M.on_region_refresh then M.on_region_refresh(context) end
+    end
     if M.region_pending == region then
         M.region_pending = nil
         context:probe("select_region: region " .. region .. " now held")

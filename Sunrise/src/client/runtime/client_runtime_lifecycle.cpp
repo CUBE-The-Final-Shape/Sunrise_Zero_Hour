@@ -11,6 +11,7 @@
 #include "../hooks/bootflow/bootflow_hook_lifecycle.h"
 #include "../hooks/bootflow/bootflow_texture_override.h"
 #include "../hooks/cine_auth_probe/cine_auth_probe.h"
+#include "../hooks/directive_probe/directive_probe.h"
 #include "../hooks/mission_effect_probe/mission_effect_probe.h"
 #include "../hooks/cine_probe/cine_probe.h"
 #include "../hooks/config_getter/config_getter_lifecycle.h"
@@ -99,6 +100,13 @@ bool shutdown() noexcept {
         core::log::write(core::log::Channel::client,
                          core::log::Level::error,
                          "ev=shutdown stage=mission_effect_probe result=fail");
+        ReleaseSRWLockExclusive(&runtime::g_lock);
+        return false;
+    }
+    if (!hooks::directive_probe::uninstall()) {
+        core::log::write(core::log::Channel::client,
+                         core::log::Level::error,
+                         "ev=shutdown stage=directive_probe result=fail");
         ReleaseSRWLockExclusive(&runtime::g_lock);
         return false;
     }

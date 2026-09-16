@@ -276,9 +276,13 @@ end
 -- the authored element shows one ("Defend the Tower": Assault repelled x / 3).
 -- `raw` skips the SDK lookup for hashes the generated SDK dropped (elements without a
 -- description, i.e. the progress-counter directives such as Homecoming's 0x23716DE6).
-function M.set_directive(context, name_hash, label, progress, raw)
+-- `element` selects which authored element of the hash to show: a directive may declare several,
+-- and the progress-counter variant is often not element 0 (Overload the generator: element 1
+-- carries "Exhaust turbines destroyed x of 3").
+function M.set_directive(context, name_hash, label, progress, raw, element)
     local ok, err = pcall(function()
-        context:slot(1):set_directive{ directive = { slot_row = 17312, name_hash = name_hash, element = 0 },
+        context:slot(1):set_directive{ directive = { slot_row = 17312, name_hash = name_hash,
+                                                     element = element or 0 },
                                        progress = progress, raw = raw or nil }
     end)
     context:probe("set_directive(" .. label .. ") progress={" .. table.concat(progress or {}, ",")

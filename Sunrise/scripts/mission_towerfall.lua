@@ -180,6 +180,53 @@ return {
 
     -- A Ghost link reports its own level (generation, progress 0..1, active); interacting with
     -- one raises this, never an object-interaction receipt.
+    -- Two channels nothing routed until now. An authored object's destruction has to reach the
+    -- server somehow; if it is neither an object level nor a damage level, it is one of these.
+    on_event_entity_died = function(context, state, event)
+        context:probe(string.format("entity_died registry=%s type=%s index=%s alive=%s prev=%s",
+            tostring(event.registry_key), tostring(event.slot_type), tostring(event.slot_index),
+            tostring(event.alive_count), tostring(event.previous_alive_count)))
+        for _, beat in ipairs(beats) do
+            if beat.on_entity_died then beat.on_entity_died(context, state, event) end
+        end
+    end,
+
+    on_event_incident_received = function(context, state, event)
+        M.incident_reports = (M.incident_reports or 0) + 1
+        if M.incident_reports <= 120 then
+            context:probe(string.format("incident registry=%s type=%s index=%s target=%s",
+                tostring(event.registry_key), tostring(event.slot_type), tostring(event.slot_index),
+                tostring(event.incident_target)))
+        end
+        for _, beat in ipairs(beats) do
+            if beat.on_incident then beat.on_incident(context, state, event) end
+        end
+    end,
+
+    -- Health/shield levels the client publishes for anything damageable. Raised straight from
+    -- the Sense channel, so it needs no authored damage monitor -- the mission declares none.
+    on_event_damage_state = function(context, state, event)
+        for _, beat in ipairs(beats) do
+            if beat.on_damage_state then beat.on_damage_state(context, state, event) end
+        end
+    end,
+
+    -- Raw decoded Sense packets. Nothing routes these normally; a beat may ask for them while
+    -- hunting for a signal the typed events do not carry.
+    on_event_sensor_sense_updated = function(context, state, event)
+        for _, beat in ipairs(beats) do
+            if beat.on_sense_update then beat.on_sense_update(context, state, event) end
+        end
+    end,
+
+    -- The client publishes an object's own level (present, alive, generation). It is how the
+    -- destruction of an authored object is observed, there being no damage monitor for one.
+    on_event_object_state = function(context, state, event)
+        for _, beat in ipairs(beats) do
+            if beat.on_object_state then beat.on_object_state(context, state, event) end
+        end
+    end,
+
     on_event_ghost_link_state = function(context, state, event)
         -- The client republishes the level on every tick while the player holds the link, so only
         -- the edges are logged: the first report, a change of `active`, and completion.

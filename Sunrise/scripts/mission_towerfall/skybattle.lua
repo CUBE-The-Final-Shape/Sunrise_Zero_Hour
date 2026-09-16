@@ -15,14 +15,25 @@ return function(M)
         return string.format("slot/80b508f4/%06x/%04x/%04x", index, index, slot_type)
     end
     local function volume(index) return { registry_key = REG, slot_type = 60, slot_index = index } end
+    -- The nav-mode and battleship volumes belong to a second registry of this bubble.
+    local REG_NAV = 0x002D225E
+    local function nav_volume(index)
+        return { registry_key = REG_NAV, slot_type = 60, slot_index = index }
+    end
 
     -- The ship's two combat objectives: obj_damaged covers the entry and the corridor,
     -- obj_deck the platform. Squads are assigned before placement so the Cabal can move.
     local AI_DAMAGED = { objective = slot(0, 3) }  -- obj_damaged
     local AI_DECK = { objective = slot(1, 3) }     -- obj_deck
+    local AI_DECK_ULTRA = { objective = slot(2, 3) } -- obj_deck_ultra, the boss's own
 
     local DIRECTIVE_DISABLE_SHIELDS = 0xDA1CA185
     local DIRECTIVE_REACH_GENERATOR = 0x57395492
+    -- Element 1 of this hash is the counter variant: same title, but it carries the progress
+    -- string ("Exhaust turbines destroyed x of 3"). Element 0 is the plain one.
+    local DIRECTIVE_OVERLOAD_GENERATOR = 0xF0D48F30
+    local OVERLOAD_ELEMENT = 1
+    local TURBINE_COUNT = 3
 
     -- A cue is fired only once its constant is set, so an unidentified one logs instead of
     -- playing something wrong (found by ear with cue_N.lua through rt_cmd).
@@ -31,6 +42,9 @@ return function(M)
     B.CUE_DOORS_OPEN = 79       -- Ghost, as the energy doors open
     B.CUE_HALL_EXIT = 82        -- as the player leaves the damaged hall
     B.CUE_ZAVALA_DOOR = nil     -- Zavala, past the door before the climb
+    B.CUE_SHIELD_ROOM = 85      -- entering the shield room
+    B.CUE_BATTLESHIP = 86       -- at the battleship, with the Overload directive
+    B.CUE_TURBINE = { 88, 90, 91 } -- one per turbine destroyed, in order
 
     local function cue(context, index, label)
         if index == nil then
@@ -119,6 +133,15 @@ return function(M)
     end
 
     function B.on_objective_progress(context, state, event)
+        -- Diagnostic: the ship may count the turbines on an objective of its own.
+        if B.turbines_armed then
+            B.progress_reports = (B.progress_reports or 0) + 1
+            if B.progress_reports <= 40 then
+                context:probe(string.format("sky: objective_progress slot=%s/%s block=%s task=%s count=%s prev=%s",
+                    tostring(event.slot_type), tostring(event.slot_index), tostring(event.objective),
+                    tostring(event.task), tostring(event.task_count), tostring(event.previous_task_count)))
+            end
+        end
         if event.slot_type ~= 3 or event.slot_index ~= 0 or not B.kill_wanted then return end
         local count = event.task_count or 0
         if B.kill_base == nil then B.kill_base = (event.previous_task_count or (count - 1)) end
@@ -154,10 +177,9 @@ return function(M)
     -- Watches
     ----------------------------------------------------------------------------------------
 
+    -- pt_sky_battle has a type-31 sensor slot but no trigger volume of its own, so it can never
+    -- be watched: the retry loop spins on it forever. Nothing here uses it.
     B.watches = {
-        -- pt_sky_battle (volume 179): first steps off the spawn.
-        { id = "pt_sky_battle", raw = volume(179),
-          on_enter = function(context) context:probe("sky: pt_sky_battle entered") end },
         -- Leaving the spawn area (bubble 8 row 21 of the trigger catalog -- this registry holds
         -- no such slot index, so it is resolved by bubble row at arm time): the three Legionaries
         -- standing by the hologram. Ghost (Cue 78) speaks only once the whole squad is down.
@@ -203,29 +225,220 @@ return function(M)
         -- pt_damaged_hall_stairs_door (389): Zavala speaks, then the climb.
         { id = "pt_damaged_hall_stairs_door", raw = volume(389),
           on_enter = function(context) cue(context, B.CUE_ZAVALA_DOOR, "Zavala past the door") end },
-        -- pt_deck_start (390): the platform. Three psions phase in, a dropship unloads, and
-        -- Brann waits further out.
+        -- pt_deck_start (390): the platform, its first set and the small Cabal ship.
         { id = "pt_deck_start", raw = volume(390),
           on_enter = function(context) B.platform(context) end },
+        -- Leaving pt_deck_hardpoint (392): the ship door opens on the whole melee set.
+        { id = "pt_deck_hardpoint", raw = volume(392),
+          on_exit = function(context)
+              M.set_device_position(context, slot(58, 23), 1.0, false, "d_ship_door")
+              M.spawn_squad(context, slot(36, 1), AI_DECK)  -- sq_ship_door_melee
+              M.spawn_squad(context, slot(37, 1), AI_DECK)  -- sq_ship_door_melee_b
+              M.spawn_squad(context, slot(38, 1), AI_DECK)  -- sq_ship_door_melee_c
+              M.spawn_squad(context, slot(39, 1), AI_DECK)  -- sq_ship_door_melee_d
+              M.spawn_squad(context, slot(40, 1), AI_DECK)  -- sq_ship_door_melee_e
+          end },
+        -- pt_airlock (395): the ship-entry set.
+        { id = "pt_airlock", raw = volume(395),
+          on_enter = function(context)
+              M.spawn_squad(context, slot(41, 1), AI_DECK)  -- sq_ship_entry_a_a
+              M.spawn_squad(context, slot(42, 1), AI_DECK)  -- sq_ship_entry_a_b
+              M.spawn_squad(context, slot(43, 1), AI_DECK)  -- sq_ship_entry_a_b_o
+              M.spawn_squad(context, slot(44, 1), AI_DECK)  -- sq_ship_entry_a_c
+          end },
+        -- pt_skybattle_navmode_2b (nav registry, volume 19): the shield room.
+        { id = "pt_skybattle_navmode_2b", raw = nav_volume(19),
+          on_enter = function(context)
+              M.spawn_squad(context, slot(45, 1), AI_DECK)  -- sq_shield_snipes
+              M.spawn_squad(context, slot(46, 1), AI_DECK)  -- sq_shield_front
+              M.spawn_squad(context, slot(47, 1), AI_DECK)  -- sq_shield_mid
+              M.spawn_squad(context, slot(48, 1), AI_DECK)  -- sq_shield_rear
+              cue(context, B.CUE_SHIELD_ROOM, "entering the shield room")
+          end },
+        -- pt_engine_room_lower (399): the melee squad and the inner door.
+        { id = "pt_engine_room_lower", raw = volume(399),
+          on_enter = function(context)
+              M.spawn_squad(context, slot(49, 1), AI_DECK)  -- sq_shield_melee
+              M.set_device_position(context, slot(59, 23), 1.0, false, "d_ship_door_enter")
+          end },
+        -- pt_destroy_battleship (nav registry, volume 41): the generator itself.
+        { id = "pt_destroy_battleship", raw = nav_volume(41),
+          on_enter = function(context) B.battleship(context) end },
     }
+
+    -- The generator room. The objects are absent by default, and the ones that spin or carry a
+    -- beam stay inert until their device is driven, so each is instantiated and then run.
+    -- Which device animates what is not readable from the package: they are labelled in the log
+    -- so the ones that do nothing can be dropped.
+    local TURBINES = { 142, 144, 146 }             -- shield_generator_a/b/c
+    local TURBINE_DEVICES = { 143, 145, 147 }      -- their own devices: rotation and beam
+    local GENERATOR_DEVICES = {
+        { 63, "d_shield_gen_collar" },             -- the column's rotating collar
+        { 64, "d_shield_gen_core" },               -- the column's energy core
+        { 61, "d_shield_gen_a" },
+        { 62, "d_shield_gen_b" },
+        { 159, "d_heat_sink_glows" },
+    }
+    -- Each turbine lights its own panel as it goes down; the lights are not on at the start.
+    local TURBINE_LIGHT = { [142] = 160, [144] = 161, [146] = 162 } -- d_gen_a/b/c_lights
+    -- Which turbine each device drives, for reading a destruction off the Sense channel.
+    local DEVICE_TURBINE = { [143] = 142, [145] = 144, [147] = 146 }
+    -- Position the generator devices are driven to. The beams are not separate objects -- no
+    -- type-4 in this registry carries one -- so they must be a state of the turbine and column
+    -- objects. If 1.0 leaves them inert, this is the value to sweep (gen_sweep.lua).
+    B.GENERATOR_POSITION = 1.0
+    -- How long our own drive to 1.0 keeps the devices reporting. Anything after that is theirs.
+    B.DEVICE_SETTLE_MS = 15000
+
+    function B.battleship(context)
+        for _, index in ipairs(TURBINES) do
+            M.set_door_object(context, slot(index, 4), true, "shield_generator")
+        end
+        M.set_door_object(context, slot(148, 4), true, "o_shield_gen_a")
+        M.set_door_object(context, slot(149, 4), true, "o_shield_gen_b")
+        for _, index in ipairs(TURBINE_DEVICES) do
+            M.set_device_position(context, slot(index, 23), B.GENERATOR_POSITION, false, "turbine device")
+        end
+        for _, entry in ipairs(GENERATOR_DEVICES) do
+            M.set_device_position(context, slot(entry[1], 23), B.GENERATOR_POSITION, false, entry[2])
+        end
+        B.turbines_down = 0
+        B.turbine_seen = {}
+        B.turbines_armed = true
+        B.generator_armed_at = M.clock_ms(context) or 0
+        M.set_directive(context, DIRECTIVE_OVERLOAD_GENERATOR, "Overload the generator",
+                        { 0, TURBINE_COUNT }, nil, OVERLOAD_ELEMENT)
+        cue(context, B.CUE_BATTLESHIP, "at the battleship")
+    end
+
+    -- Nothing typed reports a turbine's destruction: the client publishes its object level once
+    -- at instantiation and never again, and the mission declares no type-20 damage monitor
+    -- anywhere. So the raw Sense channel is listened to while the beat is live, bounded, to see
+    -- whether anything at all names those slots when one goes down.
+    function B.on_sense_update(context, state, event)
+        if not B.turbines_armed then return end
+        local index = event.slot_index
+        -- A destroyed turbine stops spinning, which means its device changes state -- and a
+        -- device's state change is exactly what the Sense channel reports. Our own drive to 1.0
+        -- bursts on the same devices when the beat arms, so bursts are ignored until that has
+        -- settled; the first one after that is the destruction.
+        local turbine = DEVICE_TURBINE[index]
+        if turbine == nil then return end
+        local now = M.clock_ms(context) or 0
+        local settled = B.generator_armed_at ~= nil and (now - B.generator_armed_at) >= B.DEVICE_SETTLE_MS
+        B.sense_reports = (B.sense_reports or 0) + 1
+        if B.sense_reports <= 200 then
+            context:probe(string.format("sky: sense device=%d turbine=%d settled=%s dt=%d",
+                index, turbine, tostring(settled), now - (B.generator_armed_at or now)))
+        end
+        if not settled or B.turbine_seen[turbine] then return end
+        B.turbine_down(context, turbine)
+    end
+
+    -- The client publishes health for anything damageable. A turbine reaching zero is the
+    -- destruction signal; nothing else in this mission reports it.
+    function B.on_damage_state(context, state, event)
+        if not B.turbines_armed then return end
+        local index = event.slot_index
+        context:probe(string.format("sky: damage type=%s index=%s health=%s shield=%s rev=%s",
+            tostring(event.slot_type), tostring(index), tostring(event.health),
+            tostring(event.shield), tostring(event.revision)))
+        local watched = false
+        for _, turbine in ipairs(TURBINES) do watched = watched or index == turbine end
+        if not watched or B.turbine_seen[index] then return end
+        local health = tonumber(event.health)
+        if health == nil or health > 0 then return end
+        B.turbine_down(context, index)
+    end
+
+    -- A turbine's destruction is read from the object's own level: the client stops reporting it
+    -- alive (or present). There is no type-20 damage monitor in this registry to watch instead.
+    function B.on_object_state(context, state, event)
+        if not B.turbines_armed then return end
+        -- Diagnostic while the signal is unknown: print what the client reports for any object
+        -- while the generator beat is live, bounded so it cannot flood.
+        B.object_reports = (B.object_reports or 0) + 1
+        if B.object_reports <= 40 then
+            context:probe(string.format("sky: object_state registry=%s type=%s index=%s present=%s alive=%s gen=%s",
+                tostring(event.registry_key), tostring(event.slot_type), tostring(event.slot_index),
+                tostring(event.present), tostring(event.alive), tostring(event.generation)))
+        end
+        local index = event.slot_index
+        local watched = false
+        for _, turbine in ipairs(TURBINES) do watched = watched or index == turbine end
+        if not watched or B.turbine_seen[index] then return end
+        local gone = event.alive == false or event.present == false
+        if not gone then return end
+        B.turbine_down(context, index)
+    end
+
+    function B.turbine_down(context, index)
+        B.turbine_seen[index] = true
+        B.turbines_down = B.turbines_down + 1
+        context:probe(string.format("sky: turbine %d destroyed (%d/%d)",
+            index, B.turbines_down, TURBINE_COUNT))
+        M.set_directive(context, DIRECTIVE_OVERLOAD_GENERATOR,
+                        string.format("Overload the generator %d/%d", B.turbines_down, TURBINE_COUNT),
+                        { B.turbines_down, TURBINE_COUNT }, nil, OVERLOAD_ELEMENT)
+        -- That turbine's own panel lights up.
+        local light = TURBINE_LIGHT[index]
+        if light then
+            M.set_device_position(context, slot(light, 23), 1.0, false, "turbine light")
+        end
+        cue(context, B.CUE_TURBINE[B.turbines_down], "turbine " .. B.turbines_down .. " down")
+        if B.turbines_down == 2 then
+            -- The heat sinks stop glowing once the second turbine is gone.
+            M.set_device_position(context, slot(159, 23), 0.0, false, "d_heat_sink_glows off")
+        end
+        if B.turbines_down >= TURBINE_COUNT then
+            B.turbines_armed = false
+            -- The way out of the generator room.
+            M.set_device_position(context, slot(60, 23), 1.0, false, "d_ship_door_exit")
+            M.set_device_position(context, slot(163, 23), 1.0, false, "d_gen_exit_lights")
+        end
+    end
 
     ----------------------------------------------------------------------------------------
     -- The platform
     ----------------------------------------------------------------------------------------
 
-    B.DROPSHIP_MS = 6000  -- the small Cabal ship arrives after the psions
-    B.BRANN_MS = 12000
+    -- Four of the deck squads carry a spawn rule distinct from their spawner config, which is
+    -- the hangar drop-pod pattern: placed through that rule they arrive by whatever it authors
+    -- instead of appearing at their anchor. The others (a_a, b_a, c_a) have no separate rule and
+    -- do pop in place. Whether these rules are a dropship unload, a fall or a phase-in is not
+    -- readable from the package -- only a live placement tells.
+    local RULE = {         -- squad slot index -> its type-66 rule slot index
+        [16] = 229,        -- sq_deck_front_a_b
+        [17] = 231,        -- sq_deck_front_a_c
+        [22] = 237,        -- sq_deck_front_b_b
+        [23] = 239,        -- sq_deck_front_b_c
+    }
 
-    function B.platform(context)
-        -- The psions phase in: o_psion_phase_in_a/b/c are the effects, the squads are the
-        -- deck_front sets closest to the entrance.
-        for _, index in ipairs({ 73, 74, 75 }) do
-            M.set_door_object(context, slot(index, 4), true, "psion phase-in")
+    -- Places a squad through its authored spawn rule (lane 1, as validated in the hangar).
+    local function place_by_rule(context, index, opts, label)
+        local rule = RULE[index]
+        if rule == nil then
+            M.spawn_squad(context, slot(index, 1), opts)
+            return
         end
-        M.spawn_squad(context, slot(12, 1), AI_DECK)  -- sq_deck_front_a_a (the pair)
-        M.spawn_squad(context, slot(16, 1), AI_DECK)  -- sq_deck_front_a_b (the one behind cover)
-        context:start_timer("sky_dropship", B.DROPSHIP_MS)
-        context:start_timer("sky_brann", B.BRANN_MS)
+        M.assign_objective(context, slot(index, 1), opts.objective)
+        local ok, err = pcall(function()
+            context:squad(slot(index, 1)):place{
+                retire_on_return = true,
+                spawn_rule = context:slot(slot(rule, 66)), spawn_lane = 1 }
+        end)
+        context:probe(string.format("sky: %s by rule ok=%s err=%s", label, tostring(ok), tostring(err)))
+    end
+
+    B.DECK_B_MS = 4000    -- the b_* set follows the dropship's arrival
+
+    -- Entering pt_deck_start: the first set plus the small Cabal ship that comes in to attack.
+    function B.platform(context)
+        M.spawn_squad(context, slot(12, 1), AI_DECK)          -- sq_deck_front_a_a (3, at its anchor)
+        place_by_rule(context, 16, AI_DECK, "sq_deck_front_a_b")
+        place_by_rule(context, 17, AI_DECK, "sq_deck_front_a_c")
+        M.spawn_squad(context, slot(154, 1), AI_DECK)         -- sq_dropship_a
+        context:start_timer("sky_deck_b", B.DECK_B_MS)
     end
 
     B.timers = {
@@ -248,16 +461,13 @@ return function(M)
                               B.try_hall_cue(ctx)
                           end)
         end,
-        sky_dropship = function(context)
-            -- The dropship that unloads on the platform, with its pilot cell.
-            M.spawn_squad(context, slot(154, 1), AI_DECK)    -- sq_dropship_a
-            M.spawn_squad(context, slot(22, 1), AI_DECK)     -- sq_deck_front_b_b
-            M.spawn_squad(context, slot(17, 1), AI_DECK)     -- sq_deck_front_a_c
-        end,
-        sky_brann = function(context)
-            M.spawn_squad(context, slot(33, 1), AI_DECK)     -- sq_deck_ultra (Brann)
-            local ok, err = pcall(function() context:slot(slot(174, 5)):play_sequence{} end)
-            context:probe("sky: Brann announce ok=" .. tostring(ok) .. " err=" .. tostring(err))
+        sky_deck_b = function(context)
+            -- b_b and b_c arrive through their own rules; b_a has none and lands at its anchor.
+            M.spawn_squad(context, slot(18, 1), AI_DECK)      -- sq_deck_front_b_a (3)
+            place_by_rule(context, 22, AI_DECK, "sq_deck_front_b_b")
+            -- The deck boss arrives with b_b, on its own objective.
+            M.spawn_squad(context, slot(33, 1), AI_DECK_ULTRA)  -- sq_deck_ultra
+            place_by_rule(context, 23, AI_DECK, "sq_deck_front_b_c")
         end,
     }
 

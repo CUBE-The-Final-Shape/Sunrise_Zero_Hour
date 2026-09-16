@@ -1,3 +1,4 @@
+#include <algorithm>
 #include <array>
 #include <cstddef>
 #include <cstdint>
@@ -204,6 +205,25 @@ bool validate(const topology::Snapshot& topology,
     for (std::size_t index = 1; index < snapshot.resources.size(); ++index) {
         if (resource_natural(snapshot.resources[index - 1])
             == resource_natural(snapshot.resources[index])) {
+            return false;
+        }
+    }
+    for (std::size_t index = 0; index < snapshot.unresourcedSlots.size(); ++index) {
+        const std::uint32_t slotRow = snapshot.unresourcedSlots[index];
+        // A slot is unresourced or resourced, never both: one descriptor per scene slot.
+        const bool resourced =
+            std::any_of(snapshot.resources.begin(),
+                        snapshot.resources.end(),
+                        [slotRow](const Resource& row) { return row.slotIndex == slotRow; });
+        if (resourced
+            || !slot_shape(topology,
+                           schemas,
+                           slotRow,
+                           format::kAuthoredSceneSlotType,
+                           format::kAuthoredSceneComponentClass,
+                           format::kAuthoredSceneSenseSchema,
+                           format::kAuthoredSceneAuthSchema)
+            || (index != 0 && snapshot.unresourcedSlots[index - 1] >= slotRow)) {
             return false;
         }
     }

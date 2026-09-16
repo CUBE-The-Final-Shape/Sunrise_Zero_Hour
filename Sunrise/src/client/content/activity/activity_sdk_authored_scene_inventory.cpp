@@ -191,6 +191,30 @@ void log_performance_edge(const squad::DescriptorFact& descriptor, const char* r
     }
 }
 
+/** Logs a scene descriptor that produced no resource row, and why. */
+void log_scene_resource(const squad::DescriptorFact& descriptor,
+                        std::uint32_t resourceTag,
+                        const char* result,
+                        core::log::Level level) noexcept {
+    std::array<char, 176> line{};
+    const int written =
+        std::snprintf(line.data(),
+                      line.size(),
+                      "ev=activity_sdk_scene_resource result=%s config=0x%08X offset=0x%X "
+                      "slot_row=%u resource=0x%08X",
+                      result,
+                      static_cast<unsigned>(descriptor.configTag),
+                      static_cast<unsigned>(descriptor.descriptorOffset),
+                      static_cast<unsigned>(descriptor.slotIndex),
+                      static_cast<unsigned>(resourceTag));
+    if (written > 0) {
+        core::log::write(
+            core::log::Channel::client,
+            level,
+            {line.data(), (std::min)(static_cast<std::size_t>(written), line.size() - 1U)});
+    }
+}
+
 /** Reads one tag once and retains the physical class beside its bytes. */
 [[nodiscard]] bool package_row(squad::TagReader reader,
                                void* readerContext,
@@ -474,11 +498,19 @@ bool build(const topology::Snapshot& topology,
             if (!read_value(blob, resourceField, resourceTag)) {
                 continue;
             }
-            if (resourceTag != 0 && resourceTag != format::kAbsentIndex) {
+            if (resourceTag == 0 || resourceTag == format::kAbsentIndex) {
+                log_scene_resource(
+                    descriptor, resourceTag, "unresourced", core::log::Level::debug);
+                pending.unresourcedSlots.push_back(descriptor.slotIndex);
+            } else {
                 const PackageRow* resourcePackage = nullptr;
-                if (package_row(reader, readerContext, resourceTag, cache, resourcePackage)
-                    && resourcePackage != nullptr
-                    && resourcePackage->classId == format::kAuthoredSceneResourceClass) {
+                if (!package_row(reader, readerContext, resourceTag, cache, resourcePackage)
+                    || resourcePackage == nullptr) {
+                    log_scene_resource(
+                        descriptor, resourceTag, "unreadable", core::log::Level::warn);
+                } else if (resourcePackage->classId != format::kAuthoredSceneResourceClass) {
+                    log_scene_resource(descriptor, resourceTag, "class", core::log::Level::warn);
+                } else {
                     Resource row{};
                     if (resource_id(topology, descriptor, row.id)) {
                         row.slotIndex = descriptor.slotIndex;
@@ -595,6 +627,10 @@ bool build(const topology::Snapshot& topology,
                                                   return task_natural(left) == task_natural(right);
                                               }),
                                   pending.taskTargets.end());
+        std::sort(pending.unresourcedSlots.begin(), pending.unresourcedSlots.end());
+        pending.unresourcedSlots.erase(
+            std::unique(pending.unresourcedSlots.begin(), pending.unresourcedSlots.end()),
+            pending.unresourcedSlots.end());
         pending.complete = true;
         output = std::move(pending);
         return true;

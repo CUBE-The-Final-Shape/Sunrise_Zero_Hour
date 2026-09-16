@@ -10,7 +10,7 @@ namespace sunrise::state::activity_sdk::format {
 /** Eight-byte identity at the start of every runtime SDK pack. */
 inline constexpr std::array<char, 8> kMagic{'S', 'R', 'S', 'D', 'K', 'P', '0', '1'};
 /** Runtime-pack schema version accepted by this reader. */
-inline constexpr std::uint32_t kVersion = 40;
+inline constexpr std::uint32_t kVersion = 41;
 /** The ABI contains only activity identity, topology, placement, and panel metadata. */
 inline constexpr std::uint32_t kSectionCount = 50;
 #if defined(SUNRISE_ACTIVITY_SDK_TESTING)
@@ -80,9 +80,16 @@ inline constexpr std::uint32_t kSlotReaderVerified = 0x1U;
 inline constexpr std::uint32_t kSlotSchemaJoinExact = 0x2U;
 /** A type-53 descriptor resolved an exact authored cue list and bounded cue count. */
 inline constexpr std::uint32_t kSlotDialogueCuesExact = 0x4U;
-/** Slot rows expose only reader, schema-join, and authored-dialogue facts. */
-inline constexpr std::uint32_t kSlotFlagMask =
-    kSlotReaderVerified | kSlotSchemaJoinExact | kSlotDialogueCuesExact;
+/**
+ * The scene slot's package config references no resource at all: the scene exists but was
+ * authored empty. A resource that is referenced but cannot be read is a generation error and
+ * gets no flag.
+ */
+inline constexpr std::uint32_t kSlotAuthoredSceneUnresourced = 0x8U;
+/** Slot rows expose only reader, schema-join, authored-dialogue, and unresourced-scene facts. */
+inline constexpr std::uint32_t kSlotFlagMask = kSlotReaderVerified | kSlotSchemaJoinExact
+                                               | kSlotDialogueCuesExact
+                                               | kSlotAuthoredSceneUnresourced;
 /** Exact generated slot tuples for authored sequence and cinematic actions. */
 inline constexpr std::uint32_t kObjectSlotType = 4U;
 inline constexpr std::uint32_t kObjectComponentClass = 0x80809927U;

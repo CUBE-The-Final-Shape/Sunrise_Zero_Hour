@@ -238,6 +238,9 @@ void clear_instance(RuntimeInstance& instance, bool clearPending) noexcept {
         // A real close, not a generation rebind: any trigger volumes this program armed client-side
         // geometric watching for no longer have a program to report a crossing to.
         client::activity::player_trigger_watch::clear_watches(instance.view.binding);
+        // A closing instance is also the moment any watch left by an earlier binding can go: the
+        // table is process-wide and nothing else ever frees those.
+        client::activity::player_trigger_watch::clear_foreign_watches(instance.view.binding);
     } else if (instance.occupied) {
         reset_pending_events_for_reattach(instance.view.binding);
     }

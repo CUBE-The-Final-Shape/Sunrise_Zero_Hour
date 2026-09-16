@@ -1291,7 +1291,10 @@ bool program_identity(const sdk::BoundView& view,
 void clear_trigger_watches(const void* context) noexcept {
     const sdk::BoundView* const view = context_view(context);
     if (valid_view(view)) {
+        // Both this run's own watches and anything a previous mission instance left behind: the
+        // table survives a mission restart and the earlier binding no longer matches anything.
         trigger_watch::clear_watches(view->binding);
+        trigger_watch::clear_foreign_watches(view->binding);
     }
 }
 

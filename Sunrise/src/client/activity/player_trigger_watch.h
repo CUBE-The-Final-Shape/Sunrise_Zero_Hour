@@ -68,6 +68,15 @@ bool unregister_watch(const Identity& identity) noexcept;
 /** Drops every watch belonging to one session, e.g. before a fresh mission attach. */
 void clear_watches(const state::activity::SessionBinding& binding) noexcept;
 
+/**
+ * Drops every watch that does NOT belong to `keep`. A mission restart in one process binds a new
+ * session, so `clear_watches` on the fresh binding matches nothing and the entries the previous
+ * run registered are never freed -- the table fills with dead bindings and every later arm fails
+ * until the process restarts. One local player runs one mission at a time, so anything under
+ * another binding is stale by definition.
+ */
+void clear_foreign_watches(const state::activity::SessionBinding& keep) noexcept;
+
 /** Drops every watch. */
 void clear_all() noexcept;
 

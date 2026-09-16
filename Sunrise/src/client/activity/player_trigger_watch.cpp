@@ -218,6 +218,16 @@ void clear_watches(const state::activity::SessionBinding& binding) noexcept {
     ReleaseSRWLockExclusive(&g_lock);
 }
 
+void clear_foreign_watches(const state::activity::SessionBinding& keep) noexcept {
+    AcquireSRWLockExclusive(&g_lock);
+    for (WatchEntry& entry : g_watches) {
+        if (entry.occupied && !same_binding(entry.identity.binding, keep)) {
+            entry = {};
+        }
+    }
+    ReleaseSRWLockExclusive(&g_lock);
+}
+
 void clear_all() noexcept {
     AcquireSRWLockExclusive(&g_lock);
     for (WatchEntry& entry : g_watches) {

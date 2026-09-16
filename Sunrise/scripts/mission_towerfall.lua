@@ -2,9 +2,17 @@
 -- and one module per bubble, merges their trigger watches and named timers, and routes the
 -- runtime callbacks. Beat logic lives in scripts/mission_towerfall/*.lua.
 -- Where the player spawns: 72 = bubble 9 (Underwatch, the mission start), 32 = bubble 4
--- (Military/hangar), 48 = bubble 6 (plaza), 0 = bubble 0 (boulevard/bazaar). Slice-set/region indices from the generated SDK's state table. Starting in a
--- later bubble installs only that bubble's beats and the following ones.
-local START_REGION = 48
+-- (Military/hangar), 48 = bubble 6 (plaza), 0 = bubble 0 (boulevard/bazaar), 64 = bubble 8 (the
+-- Cabal command ship). Slice-set/region indices from the generated SDK's state table. Starting in
+-- a later bubble installs only that bubble's beats and the following ones.
+local START_REGION = 72
+-- Authored spawn set the launch arrives at, or nil for the client's own pick. The destination
+-- declares seven, and a set is declared per MAP bubble, so several beats share one: 0x2EA8FB98 is
+-- the "Default" (where the mid cinematic puts the player down, and the only one bubble 1 offers),
+-- 0x43C4A775 lands further into the ship, past the traverse, which is what the ending was tested
+-- from. The others are 0x1562118A, 0x7BD5BC56, 0x8BC697B5, 0xC240368A and 0xDBD4BEB9. It must
+-- belong to START_REGION's bubble: a set that bubble lacks spawns nothing at all.
+local START_SPAWN = nil
 
 local M = require("mission_towerfall.common")
 local SEQ = require("mission_towerfall.sequencer")
@@ -27,6 +35,16 @@ for _, beat in ipairs(beats) do
     if beat.watches then M.add_watches(beat.watches) end
     if beat.timers then M.add_timers(beat.timers) end
 end
+
+-- Launching straight into a cinematic state to prove what owns a movie. A cinematic state has no
+-- authored spawn point, so nothing can TRAVEL into one mid-mission (the host teleport stays armed
+-- for good); the launch/arrival flow reaches it anyway, which is how the mid cinematic was first
+-- proven. Set START_REGION to the state and the controller does the rest, installing no beats.
+local CINEMATIC_PROBES = {
+    [9] = "slot/80b50126/000000/0000/0006",  -- outro_cinematic._cinematic
+    [65] = "slot/80b508fc/000000/0000/0006", -- mid_cinematic._cinematic
+}
+local CINEMATIC_PROBE = CINEMATIC_PROBES[START_REGION]
 
 local POLL_TIMER = "rt_poll"
 local POLL_INTERVAL_MS = 300
@@ -55,6 +73,14 @@ local function poll(context, state)
             M.discover_verbose = false
             next_key_retry = (M.clock_ms(context) or 0) + KEY_RETRY_MS
             SEQ.on_spawn(context)
+            -- Launched straight into a cinematic state: the movie is all there is to run.
+            if CINEMATIC_PROBE then
+                local ok, err = pcall(function()
+                    context:slot(CINEMATIC_PROBE):set_cinematic_active{ active = true }
+                end)
+                context:probe("cinematic probe (region " .. START_REGION .. ") ok="
+                    .. tostring(ok) .. " err=" .. tostring(err))
+            end
             -- Only the bubble the player spawns in runs its spawn beat; the others are entered
             -- on foot (or skipped entirely when starting later in the mission).
             for _, beat in ipairs(beats) do
@@ -87,7 +113,12 @@ local function poll(context, state)
 end
 
 return {
-    initial_state = { region_index = START_REGION },
+    -- A cinematic state declares no spawn point, so a spawn set of another bubble must not ride
+    -- along: the client would search for it in the wrong slice set and find nothing.
+    initial_state = {
+        region_index = START_REGION,
+        spawn_set_hash = CINEMATIC_PROBE == nil and START_SPAWN or nil,
+    },
 
     on_start = function(context, state)
         context:probe("rt_bridge online")
@@ -249,6 +280,9 @@ return {
     on_event_cinematic_started = function(context, state, event)
         context:probe("cinematic started registry=" .. tostring(event.registry_key)
             .. " slot=" .. tostring(event.slot_index) .. "/" .. tostring(event.slot_type))
+        for _, beat in ipairs(beats) do
+            if beat.on_cinematic_started then beat.on_cinematic_started(context, state, event) end
+        end
     end,
 
     on_event_cinematic_terminated = function(context, state, event)

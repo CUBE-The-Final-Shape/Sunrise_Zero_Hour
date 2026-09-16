@@ -27,11 +27,21 @@ return function(M)
     local AI_DECK = { objective = slot(1, 3) }     -- obj_deck
     local AI_DECK_ULTRA = { objective = slot(2, 3) } -- obj_deck_ultra, the boss's own
 
+    -- sc_explosion_a/b of this bubble. The bare names are shared with the hangar's copies, so
+    -- both are addressed by their full ids; the graph is the one every explosion scene uses.
+    M.register_scene("ship_explosion_a", { resource = 0x80B82715 }, {
+        slot = slot(137, 43),
+        scene = "symbol/80b500bc/0008/0000/80b508f8/28/000000/80b508f4/0089/002b" })
+    M.register_scene("ship_explosion_b", { resource = 0x80B82715 }, {
+        slot = slot(138, 43),
+        scene = "symbol/80b500bc/0008/0000/80b508f8/28/000000/80b508f4/008a/002b" })
+
     local DIRECTIVE_DISABLE_SHIELDS = 0xDA1CA185
     local DIRECTIVE_REACH_GENERATOR = 0x57395492
     -- Element 1 of this hash is the counter variant: same title, but it carries the progress
     -- string ("Exhaust turbines destroyed x of 3"). Element 0 is the plain one.
     local DIRECTIVE_OVERLOAD_GENERATOR = 0xF0D48F30
+    local DIRECTIVE_ESCAPE_SHIP = 0xD15B9A42
     local OVERLOAD_ELEMENT = 1
     local TURBINE_COUNT = 3
 
@@ -45,6 +55,7 @@ return function(M)
     B.CUE_SHIELD_ROOM = 85      -- entering the shield room
     B.CUE_BATTLESHIP = 86       -- at the battleship, with the Overload directive
     B.CUE_TURBINE = { 88, 90, 91 } -- one per turbine destroyed, in order
+    B.CUE_ESCAPE = 92           -- shortly after the escape directive
 
     local function cue(context, index, label)
         if index == nil then
@@ -264,7 +275,70 @@ return function(M)
         -- pt_destroy_battleship (nav registry, volume 41): the generator itself.
         { id = "pt_destroy_battleship", raw = nav_volume(41),
           on_enter = function(context) B.battleship(context) end },
+        -- The escape, on the way out: one explosion scene per volume.
+        { id = "pt_escape_explosion_a", raw = volume(293),
+          on_enter = function(context) M.start_scene(context, "ship_explosion_a") end },
+        { id = "pt_escape_explosion_b", raw = volume(294),
+          on_enter = function(context) M.start_scene(context, "ship_explosion_b") end },
+        -- pt_goto_end (nav registry, volume 49): fade, then the outro cinematic.
+        { id = "pt_goto_end", raw = nav_volume(49),
+          on_enter = function(context) B.ending(context) end },
     }
+
+    ----------------------------------------------------------------------------------------
+    -- The ending
+    ----------------------------------------------------------------------------------------
+
+    -- outro_cinematic._cinematic (slot/80b50126) belongs to region 9, bubble 1's ordinal-1 state:
+    -- proved live by the client's own started incident, which named registry 42e8f541 -- that
+    -- state's hash.
+    --
+    -- The move is the same one as boulevard -> ship, and like it, it MUST carry a spawn set: a
+    -- host teleport places the party from one, and with none the arm never completes (the client
+    -- sits at teleport_state=1 and never reports the region). Bubble 1 offers exactly one, the
+    -- destination's Default -- spawn sets are declared per MAP bubble, so the set the ship uses
+    -- serves this bubble too.
+    local OUTRO_CINEMATIC = "slot/80b50126/000000/0000/0006"
+    local OUTRO_REGION = 9
+    local OUTRO_SPAWN = 0x2EA8FB98
+    local FADE_FILTER, FADE_HOPON = slot(208, 34), slot(153, 26)
+
+    B.ENDING_TRAVEL_MS = 1500 -- black before the region changes
+
+    function B.ending(context)
+        if B.ending_started then return end
+        B.ending_started = true
+        local ok, err = pcall(function()
+            context:slot(FADE_FILTER):set_object_filter{ players = true }
+            context:slot(FADE_HOPON):set_mission_effect{
+                filter = context:slot(FADE_FILTER), enabled = true, revision = 1 }
+        end)
+        context:probe("sky: ending fade ok=" .. tostring(ok) .. " err=" .. tostring(err))
+        context:start_timer("sky_ending_travel", B.ENDING_TRAVEL_MS)
+    end
+
+    function B.travel_to_outro(context)
+        M.region_on_held = function(ctx, held)
+            if held ~= OUTRO_REGION then return end
+            M.region_on_held = nil
+            local ok, err = pcall(function()
+                ctx:slot(OUTRO_CINEMATIC):set_cinematic_active{ active = true }
+            end)
+            ctx:probe("sky: outro cinematic ok=" .. tostring(ok) .. " err=" .. tostring(err))
+        end
+        M.select_region(context, OUTRO_REGION, { spawn_set_hash = OUTRO_SPAWN })
+    end
+
+    -- The movie ends, or the player skips it: stop it. Nothing follows, this is the end of the
+    -- mission, so the party is left where the cinematic state put it.
+    function B.on_cinematic_terminated(context, state, event)
+        if not B.ending_started or B.outro_stopped then return end
+        B.outro_stopped = true
+        local ok, err = pcall(function()
+            context:slot(OUTRO_CINEMATIC):set_cinematic_active{ active = false }
+        end)
+        context:probe("sky: outro stopped ok=" .. tostring(ok) .. " err=" .. tostring(err))
+    end
 
     -- The generator room. The objects are absent by default, and the ones that spin or carry a
     -- beam stay inert until their device is driven, so each is instantiated and then run.
@@ -287,8 +361,11 @@ return function(M)
     -- type-4 in this registry carries one -- so they must be a state of the turbine and column
     -- objects. If 1.0 leaves them inert, this is the value to sweep (gen_sweep.lua).
     B.GENERATOR_POSITION = 1.0
-    -- How long our own drive to 1.0 keeps the devices reporting. Anything after that is theirs.
-    B.DEVICE_SETTLE_MS = 15000
+    -- Silence that separates two bursts of reports on one device.
+    B.BURST_GAP_MS = 2000
+    B.LAST_CUE_MS = 2000        -- the last turbine's line waits for the blast to land
+    B.ESCAPE_DIRECTIVE_MS = 6000 -- after that line: "Escape the command ship" and the crawler
+    B.ESCAPE_CUE_MS = 2000      -- Cue 92 follows the directive
 
     function B.battleship(context)
         for _, index in ipairs(TURBINES) do
@@ -305,7 +382,7 @@ return function(M)
         B.turbines_down = 0
         B.turbine_seen = {}
         B.turbines_armed = true
-        B.generator_armed_at = M.clock_ms(context) or 0
+        B.device_seen = {}
         M.set_directive(context, DIRECTIVE_OVERLOAD_GENERATOR, "Overload the generator",
                         { 0, TURBINE_COUNT }, nil, OVERLOAD_ELEMENT)
         cue(context, B.CUE_BATTLESHIP, "at the battleship")
@@ -319,19 +396,28 @@ return function(M)
         if not B.turbines_armed then return end
         local index = event.slot_index
         -- A destroyed turbine stops spinning, which means its device changes state -- and a
-        -- device's state change is exactly what the Sense channel reports. Our own drive to 1.0
-        -- bursts on the same devices when the beat arms, so bursts are ignored until that has
-        -- settled; the first one after that is the destruction.
+        -- device's state change is what the Sense channel reports. Our own drive to 1.0 makes
+        -- the same device report a burst when the beat arms, so bursts are counted rather than
+        -- timed: the first burst on a device is ours, the next one is the destruction. A fixed
+        -- settle delay lost any turbine destroyed before it elapsed.
         local turbine = DEVICE_TURBINE[index]
         if turbine == nil then return end
         local now = M.clock_ms(context) or 0
-        local settled = B.generator_armed_at ~= nil and (now - B.generator_armed_at) >= B.DEVICE_SETTLE_MS
+        local seen = B.device_seen[index]
+        local new_burst = seen == nil or (now - seen.last) >= B.BURST_GAP_MS
+        if seen == nil then
+            seen = { bursts = 0, last = now }
+            B.device_seen[index] = seen
+        end
+        if new_burst then seen.bursts = seen.bursts + 1 end
+        seen.last = now
         B.sense_reports = (B.sense_reports or 0) + 1
         if B.sense_reports <= 200 then
-            context:probe(string.format("sky: sense device=%d turbine=%d settled=%s dt=%d",
-                index, turbine, tostring(settled), now - (B.generator_armed_at or now)))
+            context:probe(string.format("sky: sense device=%d turbine=%d burst=%d new=%s",
+                index, turbine, seen.bursts, tostring(new_burst)))
         end
-        if not settled or B.turbine_seen[turbine] then return end
+        -- Burst 1 is our own drive; anything later is the device stopping.
+        if seen.bursts < 2 or B.turbine_seen[turbine] then return end
         B.turbine_down(context, turbine)
     end
 
@@ -385,7 +471,12 @@ return function(M)
         if light then
             M.set_device_position(context, slot(light, 23), 1.0, false, "turbine light")
         end
-        cue(context, B.CUE_TURBINE[B.turbines_down], "turbine " .. B.turbines_down .. " down")
+        if B.turbines_down >= TURBINE_COUNT then
+            -- The last line waits for the blast to land before it speaks.
+            context:start_timer("sky_last_cue", B.LAST_CUE_MS)
+        else
+            cue(context, B.CUE_TURBINE[B.turbines_down], "turbine " .. B.turbines_down .. " down")
+        end
         if B.turbines_down == 2 then
             -- The heat sinks stop glowing once the second turbine is gone.
             M.set_device_position(context, slot(159, 23), 0.0, false, "d_heat_sink_glows off")
@@ -450,6 +541,17 @@ return function(M)
             M.set_directive(context, DIRECTIVE_DISABLE_SHIELDS, "Disable the shields")
         end,
         sky_pod_doors = function(context) B.open_pod_doors(context) end,
+        sky_last_cue = function(context)
+            cue(context, B.CUE_TURBINE[TURBINE_COUNT], "the last turbine")
+            context:start_timer("sky_escape_directive", B.ESCAPE_DIRECTIVE_MS)
+        end,
+        sky_escape_directive = function(context)
+            M.set_directive(context, DIRECTIVE_ESCAPE_SHIP, "Escape the command ship")
+            M.spawn_squad(context, slot(71, 1), AI_DECK)  -- cabal_crawler
+            context:start_timer("sky_escape_cue", B.ESCAPE_CUE_MS)
+        end,
+        sky_escape_cue = function(context) cue(context, B.CUE_ESCAPE, "the escape") end,
+        sky_ending_travel = function(context) B.travel_to_outro(context) end,
         sky_hall_melee = function(context)
             M.spawn_squad(context, slot(9, 1), AI_DAMAGED)   -- sq_damaged_hall_melee
             -- Armed once all three are placed, with the default confirmation: a squad seen alive
@@ -470,6 +572,9 @@ return function(M)
             place_by_rule(context, 23, AI_DECK, "sq_deck_front_b_c")
         end,
     }
+
+    -- Reachable from rt_cmd for live testing: the module's locals are otherwise closed over.
+    M.skybattle = B
 
     return B
 end

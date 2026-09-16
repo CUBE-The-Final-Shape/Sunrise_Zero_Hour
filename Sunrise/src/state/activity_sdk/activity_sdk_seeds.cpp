@@ -407,6 +407,10 @@ AuthoredSceneSeedStatus materialize_authored_scene_seeds(const Catalog& catalog,
             || (slot.flags & format::kSlotSchemaJoinExact) == 0) {
             return AuthoredSceneSeedStatus::schemaMismatch;
         }
+        // A scene authored without a resource has nothing to seed; it is not a missing one.
+        if ((slot.flags & format::kSlotAuthoredSceneUnresourced) != 0) {
+            continue;
+        }
 
         const auto resources = slot_authored_scene_resources(catalog, slot);
         if (resources.empty()) {
@@ -432,7 +436,8 @@ AuthoredSceneSeedStatus materialize_authored_scene_seeds(const Catalog& catalog,
     std::size_t written = 0;
     for (const format::Slot& slot : slots) {
         if (slot.slotType != format::kAuthoredSceneSlotType
-            || slot.componentClass == format::kAbsentIndex) {
+            || slot.componentClass == format::kAbsentIndex
+            || (slot.flags & format::kSlotAuthoredSceneUnresourced) != 0) {
             continue;
         }
         const auto resources = slot_authored_scene_resources(catalog, slot);

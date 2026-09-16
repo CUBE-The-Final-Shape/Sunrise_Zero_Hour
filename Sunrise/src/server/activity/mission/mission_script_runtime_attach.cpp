@@ -809,10 +809,20 @@ void apply_script_initial_state_override_impl(
                                                            : "source_too_large");
         return;
     }
-    const std::int32_t region = lua_vm::probe_initial_state_region(source, g_sdkLuaSearchPath.data());
+    std::uint32_t spawnSetHash = 0;
+    const std::int32_t region =
+        lua_vm::probe_initial_state_region(source, g_sdkLuaSearchPath.data(), &spawnSetHash);
     if (region >= 0) {
         selection.sliceSetOverride = static_cast<std::uint16_t>(region);
         selection.hasSliceSetOverride = true;
+        // An authored spawn set makes a scripted start land where the beat expects it; without one
+        // the client falls back to an arbitrary point of the region. It is written as the override
+        // rather than the descriptor's own field because a forced destination lands just before
+        // this and sets its own override, which resolve_spawn_set_hash reads first.
+        if (state::activity::destination::usable_spawn_set_hash(true, spawnSetHash)) {
+            selection.spawnSetOverride = spawnSetHash;
+            selection.hasSpawnSetOverride = true;
+        }
         log_line(core::log::Level::warn, nullptr, "initial_state_probe", "region_applied");
     } else {
         log_line(core::log::Level::warn, nullptr, "initial_state_probe", "no_initial_state_declared");

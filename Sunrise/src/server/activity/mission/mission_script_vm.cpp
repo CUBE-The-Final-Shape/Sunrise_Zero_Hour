@@ -722,7 +722,8 @@ void probe_failure(lua_State* L, const char* stage) noexcept {
 }
 
 std::int32_t probe_initial_state_region(std::span<const char> source,
-                                        std::string_view sdkLuaSearchPath) noexcept {
+                                        std::string_view sdkLuaSearchPath,
+                                        std::uint32_t* spawnSetHash) noexcept {
     if (source.empty()) {
         return -1;
     }
@@ -775,6 +776,16 @@ std::int32_t probe_initial_state_region(std::span<const char> source,
     std::int32_t region = -1;
     if (lua_isinteger(L, -1)) {
         region = static_cast<std::int32_t>(lua_tointeger(L, -1));
+    }
+    lua_pop(L, 1);
+    // The authored spawn set the launch arrives at. Without one the client picks an arbitrary
+    // point of the region, which is why a scripted start landed nowhere in particular.
+    lua_getfield(L, -1, "spawn_set_hash");
+    if (spawnSetHash != nullptr && lua_isinteger(L, -1)) {
+        const lua_Integer value = lua_tointeger(L, -1);
+        if (value > 0 && value <= static_cast<lua_Integer>(0xFFFFFFFF)) {
+            *spawnSetHash = static_cast<std::uint32_t>(value);
+        }
     }
     lua_close(L);
     return region;

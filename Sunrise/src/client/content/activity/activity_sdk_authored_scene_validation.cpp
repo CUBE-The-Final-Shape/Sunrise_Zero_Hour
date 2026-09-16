@@ -87,7 +87,7 @@ constexpr std::size_t kHashCombineConstant = 0x9E3779B9U;
                 || descriptor.objectIndex >= topology.objects.size()
                 || descriptor.slotIndex >= topology.slots.size()
                 || descriptor.descriptorOffset
-                       > format::kAbsentIndex - format::kAuthoredSceneSquadReferenceRelativeOffset
+                       > format::kAbsentIndex - format::kAuthoredSceneParticipantTableRelativeOffset
                 || !descriptor_id(topology, descriptor, expected) || descriptor.id != expected
                 || !ids.emplace(descriptor.id).second) {
                 return false;
@@ -232,11 +232,16 @@ bool validate(const topology::Snapshot& topology,
         const squad::DescriptorFact* descriptor =
             find_descriptor(descriptors, row.sceneSlotIndex, row.configTag, row.descriptorOffset);
         Text expectedId{};
-        // A row is a type-43 scene edge or a type-42 performance edge; the flag says which.
+        // A row is a type-43 scene edge or a type-42 performance edge; the flag says which. A
+        // performance names its squad at a fixed field; a scene names it in a block its
+        // participant table points at, so only the table's position bounds that field here.
         const bool performance = row.flags == format::kAuthoredSceneSquadPerformanceTargetExact;
         const std::uint32_t referenceOffset =
             performance ? format::kPerformanceSquadReferenceRelativeOffset
-                        : format::kAuthoredSceneSquadReferenceRelativeOffset;
+                        : format::kAuthoredSceneParticipantTableRelativeOffset;
+        const bool referencePlaced =
+            performance ? row.referenceFieldOffset == row.descriptorOffset + referenceOffset
+                        : row.referenceFieldOffset > row.descriptorOffset + referenceOffset;
         const bool sourceShape = performance ? slot_shape(topology,
                                                           schemas,
                                                           row.sceneSlotIndex,
@@ -256,8 +261,9 @@ bool validate(const topology::Snapshot& topology,
             || topology.slots[row.squadSlotIndex].objectIndex != descriptor->objectIndex
             || !(performance ? is_performance_descriptor(topology, *descriptor)
                              : is_scene_descriptor(topology, *descriptor))
-            || !edge_id(topology, *descriptor, expectedId) || expectedId.value != row.id.value
-            || expectedId.length != row.id.length || !sourceShape
+            || !edge_id(topology, *descriptor, row.squadSlotIndex, expectedId)
+            || expectedId.value != row.id.value || expectedId.length != row.id.length
+            || !sourceShape
             || !slot_shape(topology,
                            schemas,
                            row.squadSlotIndex,
@@ -265,8 +271,7 @@ bool validate(const topology::Snapshot& topology,
                            format::kSquadComponentClass,
                            format::kSquadSenseSchema,
                            format::kSquadAuthSchema)
-            || row.descriptorOffset > format::kAbsentIndex - referenceOffset
-            || row.referenceFieldOffset != row.descriptorOffset + referenceOffset
+            || row.descriptorOffset > format::kAbsentIndex - referenceOffset || !referencePlaced
             || row.targetObjectKey != topology.objects[descriptor->objectIndex].objectKey
             || (row.flags != format::kAuthoredSceneSquadSameObjectExact && !performance)
             || row.reserved != 0

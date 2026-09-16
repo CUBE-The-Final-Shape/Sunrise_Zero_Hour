@@ -32,23 +32,27 @@ bool resource_id(const topology::Snapshot& topology,
                        static_cast<unsigned>(slot.slotType));
 }
 
-/** Formats one scene-to-squad edge ID from its exact descriptor tuple. */
+/** Formats one scene-to-squad edge ID from its descriptor tuple and the squad slot it names. */
 bool edge_id(const topology::Snapshot& topology,
              const squad::DescriptorFact& descriptor,
+             std::uint32_t squadSlotRow,
              Text& output) noexcept {
     if (descriptor.objectIndex >= topology.objects.size()
-        || descriptor.slotIndex >= topology.slots.size()) {
+        || descriptor.slotIndex >= topology.slots.size() || squadSlotRow >= topology.slots.size()) {
         return false;
     }
     const topology::Object& object = topology.objects[descriptor.objectIndex];
     const topology::Slot& slot = topology.slots[descriptor.slotIndex];
+    const topology::Slot& squad = topology.slots[squadSlotRow];
     return format_text(output,
-                       "authored-scene-squad-edge/%08x/%08x/%08x/%04x/%04x",
+                       "authored-scene-squad-edge/%08x/%08x/%08x/%04x/%04x/%04x/%04x",
                        static_cast<unsigned>(descriptor.configTag),
                        static_cast<unsigned>(object.objectTag),
                        static_cast<unsigned>(descriptor.descriptorOffset),
                        static_cast<unsigned>(slot.slotIndex),
-                       static_cast<unsigned>(slot.slotType));
+                       static_cast<unsigned>(slot.slotType),
+                       static_cast<unsigned>(squad.slotIndex),
+                       static_cast<unsigned>(squad.slotType));
 }
 
 /** Formats one task-to-objective target ID from its exact descriptor tuple. */
@@ -459,7 +463,7 @@ bool build(const topology::Snapshot& topology,
                     continue;
                 }
                 SquadEdge row{};
-                if (!edge_id(topology, descriptor, row.id)) {
+                if (!edge_id(topology, descriptor, linkedSlot, row.id)) {
                     log_performance_edge(descriptor, "identity");
                     continue;
                 }
@@ -499,8 +503,7 @@ bool build(const topology::Snapshot& topology,
                 continue;
             }
             if (resourceTag == 0 || resourceTag == format::kAbsentIndex) {
-                log_scene_resource(
-                    descriptor, resourceTag, "unresourced", core::log::Level::debug);
+                log_scene_resource(descriptor, resourceTag, "unresourced", core::log::Level::debug);
                 pending.unresourcedSlots.push_back(descriptor.slotIndex);
             } else {
                 const PackageRow* resourcePackage = nullptr;
@@ -525,61 +528,87 @@ bool build(const topology::Snapshot& topology,
                 }
             }
 
-            const std::size_t blockClassField =
-                static_cast<std::size_t>(descriptor.descriptorOffset)
-                + format::kAuthoredSceneSquadBlockClassRelativeOffset;
-            std::uint32_t blockClass = 0;
-            if (!read_value(blob, blockClassField, blockClass)) {
+            // Every squad in the participant table is an edge; the other participant kinds
+            // (point sets, objects) are not.
+            const std::size_t descriptorOffset = descriptor.descriptorOffset;
+            std::uint64_t participantCount = 0;
+            std::uint32_t tableClass = 0;
+            if (!read_value(blob,
+                            descriptorOffset + format::kAuthoredSceneParticipantCountRelativeOffset,
+                            participantCount)
+                || !read_value(blob,
+                               descriptorOffset
+                                   + format::kAuthoredSceneParticipantTableClassRelativeOffset,
+                               tableClass)
+                || tableClass != format::kAuthoredSceneParticipantTableClass
+                || participantCount > format::kAuthoredSceneParticipantCapacity) {
                 continue;
             }
-            if (blockClass != format::kAuthoredSceneSquadBlockClass) {
-                continue;
+            for (std::uint64_t entry = 0; entry < participantCount; ++entry) {
+                const std::size_t pointerField =
+                    descriptorOffset + format::kAuthoredSceneParticipantTableRelativeOffset
+                    + static_cast<std::size_t>(entry)
+                          * format::kAuthoredSceneParticipantPointerSize;
+                std::uint64_t pointer = 0;
+                if (!read_value(blob, pointerField, pointer)
+                    || pointer > blob.size() - pointerField) {
+                    break;
+                }
+                const std::size_t payload = pointerField + static_cast<std::size_t>(pointer);
+                std::uint32_t blockClass = 0;
+                if (payload < format::kAuthoredSceneParticipantClassSize
+                    || !read_value(
+                        blob, payload - format::kAuthoredSceneParticipantClassSize, blockClass)) {
+                    break;
+                }
+                if (blockClass != format::kAuthoredSceneSquadBlockClass) {
+                    continue;
+                }
+                const std::size_t referenceField =
+                    payload + format::kAuthoredSceneSquadPayloadReferenceOffset;
+                std::uint32_t targetObjectKey = 0;
+                std::uint16_t targetSlotType = 0;
+                std::uint16_t targetSlotIndex = 0;
+                if (!read_value(blob, referenceField, targetObjectKey)
+                    || !read_value(
+                        blob, referenceField + kTargetSlotTypeRelativeOffset, targetSlotType)
+                    || !read_value(
+                        blob, referenceField + kTargetSlotIndexRelativeOffset, targetSlotIndex)) {
+                    break;
+                }
+                if (targetSlotType != format::kSquadSlotType
+                    || descriptor.objectIndex >= topology.objects.size()
+                    || targetObjectKey != topology.objects[descriptor.objectIndex].objectKey) {
+                    continue;
+                }
+                std::uint32_t linkedSlot = format::kAbsentIndex;
+                if (!same_object_slot(
+                        topology, descriptor, targetSlotType, targetSlotIndex, linkedSlot)) {
+                    return false;
+                }
+                if (linkedSlot == format::kAbsentIndex
+                    || !slot_shape(topology,
+                                   schemas,
+                                   linkedSlot,
+                                   format::kSquadSlotType,
+                                   format::kSquadComponentClass,
+                                   format::kSquadSenseSchema,
+                                   format::kSquadAuthSchema)) {
+                    continue;
+                }
+                SquadEdge row{};
+                if (!edge_id(topology, descriptor, linkedSlot, row.id)) {
+                    continue;
+                }
+                row.sceneSlotIndex = descriptor.slotIndex;
+                row.squadSlotIndex = linkedSlot;
+                row.configTag = descriptor.configTag;
+                row.descriptorOffset = descriptor.descriptorOffset;
+                row.referenceFieldOffset = static_cast<std::uint32_t>(referenceField);
+                row.targetObjectKey = targetObjectKey;
+                row.flags = format::kAuthoredSceneSquadSameObjectExact;
+                pending.squadEdges.push_back(row);
             }
-            const std::size_t referenceField = static_cast<std::size_t>(descriptor.descriptorOffset)
-                                               + format::kAuthoredSceneSquadReferenceRelativeOffset;
-            std::uint32_t targetObjectKey = 0;
-            std::uint16_t targetSlotType = 0;
-            std::uint16_t targetSlotIndex = 0;
-            if (!read_value(blob, referenceField, targetObjectKey)
-                || !read_value(blob, referenceField + kTargetSlotTypeRelativeOffset, targetSlotType)
-                || !read_value(
-                    blob, referenceField + kTargetSlotIndexRelativeOffset, targetSlotIndex)) {
-                continue;
-            }
-            if (targetSlotType != format::kSquadSlotType) {
-                continue;
-            }
-            if (descriptor.objectIndex >= topology.objects.size()
-                || targetObjectKey != topology.objects[descriptor.objectIndex].objectKey) {
-                continue;
-            }
-            std::uint32_t linkedSlot = format::kAbsentIndex;
-            if (!same_object_slot(
-                    topology, descriptor, targetSlotType, targetSlotIndex, linkedSlot)) {
-                return false;
-            }
-            if (linkedSlot == format::kAbsentIndex
-                || !slot_shape(topology,
-                               schemas,
-                               linkedSlot,
-                               format::kSquadSlotType,
-                               format::kSquadComponentClass,
-                               format::kSquadSenseSchema,
-                               format::kSquadAuthSchema)) {
-                continue;
-            }
-            SquadEdge row{};
-            if (!edge_id(topology, descriptor, row.id)) {
-                continue;
-            }
-            row.sceneSlotIndex = descriptor.slotIndex;
-            row.squadSlotIndex = linkedSlot;
-            row.configTag = descriptor.configTag;
-            row.descriptorOffset = descriptor.descriptorOffset;
-            row.referenceFieldOffset = static_cast<std::uint32_t>(referenceField);
-            row.targetObjectKey = targetObjectKey;
-            row.flags = format::kAuthoredSceneSquadSameObjectExact;
-            pending.squadEdges.push_back(row);
         }
         // A sensor with no descriptor fact logs nothing above, so count both sides here.
         {

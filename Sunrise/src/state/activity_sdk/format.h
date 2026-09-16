@@ -300,9 +300,22 @@ inline constexpr std::uint32_t kActorSequenceLocalDefinitionClass = 0x8080815FU;
 inline constexpr std::uint32_t kActorSequenceGlobalArrayOffset = 152;
 inline constexpr std::uint32_t kActorSequenceLocalArrayOffset = 16;
 inline constexpr std::uint32_t kActorSequenceOwnerSourceClass = 0x808082ECU;
-inline constexpr std::uint32_t kAuthoredSceneSquadBlockClassRelativeOffset = 0xA4U;
+/**
+ * A type-43 config lists its participants as a table: a 64-bit count, the table class, then one
+ * 64-bit pointer per participant, each relative to its own field. A pointer lands on a block's
+ * payload; the block's class sits in the four bytes before it. Only squad blocks become edges.
+ */
+inline constexpr std::uint32_t kAuthoredSceneParticipantCountRelativeOffset = 0x88U;
+inline constexpr std::uint32_t kAuthoredSceneParticipantTableClassRelativeOffset = 0x90U;
+inline constexpr std::uint32_t kAuthoredSceneParticipantTableRelativeOffset = 0x98U;
+inline constexpr std::uint32_t kAuthoredSceneParticipantTableClass = 0x80806268U;
+inline constexpr std::uint32_t kAuthoredSceneParticipantPointerSize = 8U;
+inline constexpr std::uint32_t kAuthoredSceneParticipantClassSize = 4U;
+/** More participants than any installed scene declares; a larger count is a misread config. */
+inline constexpr std::uint32_t kAuthoredSceneParticipantCapacity = 64U;
 inline constexpr std::uint32_t kAuthoredSceneSquadBlockClass = 0x80806262U;
-inline constexpr std::uint32_t kAuthoredSceneSquadReferenceRelativeOffset = 0xB0U;
+/** Squad reference inside a squad block's payload: object key, then slot type and index. */
+inline constexpr std::uint32_t kAuthoredSceneSquadPayloadReferenceOffset = 0x8U;
 /** Exact type-38 task edge to the authored type-3 objective component it mutates. */
 inline constexpr std::uint32_t kTaskSlotType = 38U;
 inline constexpr std::uint32_t kTaskComponentClass = 0x80807D87U;

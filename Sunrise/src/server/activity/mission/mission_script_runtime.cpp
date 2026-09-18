@@ -337,8 +337,10 @@ void clear_instance(RuntimeInstance& instance, bool clearPending) noexcept {
     instance.ghostObservations = {};
     instance.actorPathObservations = {};
     instance.squadObservations = {};
+    instance.damageObservations = {};
     instance.combatantDamageObservations = {};
     instance.deviceObservations = {};
+    instance.objectInteractionObservations = {};
     instance.sceneObservations = {};
     instance.objectiveObservations = {};
     instance.sessionRoster = {};

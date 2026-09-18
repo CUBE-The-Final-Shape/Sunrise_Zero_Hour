@@ -50,6 +50,7 @@ bool render_contract_files(const Source& source, Bundle& output) noexcept {
                  {"actor_sequence_entries", number(source.actorSequenceEntries.size())},
                  {"actor_sequence_bindings", number(source.actorSequenceBindings.size())},
                  {"authored_scene_event_keys", number(source.authoredSceneEventKeys.size())},
+                 {"dialogue_cues", number(source.dialogueCues.size())},
              })},
         });
         if (!render_json(manifest, 0, output.manifestJson)) {
@@ -101,6 +102,8 @@ local EventKind = {
     SQUAD_PROVOKED = 38,
     DEVICE_STATE = 39,
     REGION_CHANGED = 40,
+    DIALOGUE_STAGED = 41,
+    DIALOGUE_FINISHED = 42,
 }
 
 ---@class SunriseEvent
@@ -174,6 +177,18 @@ local EventKind = {
 ---@field applied_request fun(self: SunriseDeviceStateEvent, )lua"
             R"lua(args: {channel: any}): SunriseRequestKey|nil
 
+---@class SunriseDialogueCueEvent: SunriseEvent
+---@field dialogue_registry_key integer
+---@field dialogue_slot_type integer
+---@field dialogue_slot_index integer
+---@field cue integer
+---@field duration_ms integer
+
+---@class SunriseDialogueFinishedEvent: SunriseDialogueCueEvent
+---@field timer_name string
+---@field timer_deadline_tick string
+---@field timer_sequence string
+
 ---@class SunriseProgram
 ---@field on_start? fun(context: any, state: SunriseState)
 ---@field on_load? fun(context: any, state: SunriseState)
@@ -226,6 +241,10 @@ local EventKind = {
 ---@field on_event_damage_state? SunriseEventHandler
 ---@field on_event_cinematic_skip_requested? fun(context: any, state: SunriseState, )lua"
             R"lua(event: SunriseCinematicEvent)
+---@field on_event_dialogue_staged? fun(context: any, state: SunriseState, )lua"
+            R"lua(event: SunriseDialogueCueEvent)
+---@field on_event_dialogue_finished? fun(context: any, state: SunriseState, )lua"
+            R"lua(event: SunriseDialogueFinishedEvent)
 
 ---@class SunriseVector3
 ---@field x number

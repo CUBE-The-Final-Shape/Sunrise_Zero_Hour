@@ -175,6 +175,8 @@ namespace auth_catalog = middleware::bap::activity_message::auth_schema_catalog;
         lua_pushcfunction(state, &slot_transition);
     } else if (key == "set_occupancy_condition") {
         lua_pushcfunction(state, &slot_set_occupancy_condition);
+    } else if (key == "generate_map") {
+        lua_pushcfunction(state, &slot_generate_map);
     } else if (key == "set_directive") {
         lua_pushcfunction(state, &slot_set_directive);
     } else if (key == "clear_directives") {

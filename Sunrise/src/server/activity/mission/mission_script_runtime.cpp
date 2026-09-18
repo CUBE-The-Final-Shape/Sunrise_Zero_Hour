@@ -273,7 +273,8 @@ bool describe_dialogue_cue(const RuntimeInstance& instance,
     event.dialogueRegistryKey = objects[slot.objectIndex].objectKey;
     event.dialogueSlotType = static_cast<std::int8_t>(slot.slotType);
     event.dialogueSlotIndex = static_cast<std::int16_t>(slot.slotIndex);
-    event.dialogueDurationMs = cues[cue].durationMs;
+    // The client reports no line end; the authored window is the only length a cue carries.
+    event.dialogueDurationMs = sdk::authored_milliseconds(cues[cue].authoredWindowSeconds);
     return true;
 }
 

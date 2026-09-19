@@ -554,6 +554,34 @@ runtime_schema(const CompositeEntityCodecContext& context, std::uint32_t handle)
         }
         *semanticTag = tag;
     }
+    // The damage component sends each level pool as its own ten-bit walk; pool 0 is health.
+    constexpr std::uint32_t kDamageComponent = 0x80804BEEU;
+    // Schema 80804C5C is one pool level; its single field is the only value it decodes.
+    constexpr std::uint32_t kDamagePoolSchema = 0x80804C5CU;
+    if (resolverContext.componentTag == kDamageComponent) {
+        for (const auto& value : std::span(values).first(result.valueCount)) {
+            if (value.schemaHandle != kDamagePoolSchema || !value.present) {
+                continue;
+            }
+            const double level = value.kind == wire::ValueKind::real32
+                                     ? static_cast<double>(value.realValue)
+                                 : value.kind == wire::ValueKind::signedInteger
+                                     ? static_cast<double>(value.signedValue)
+                                     : static_cast<double>(value.unsignedValue);
+            if (!(level >= 0.0 && level <= 1023.0)) {
+                continue;
+            }
+            if (mirror.damagePools == 0) {
+                mirror.damageHealth = static_cast<std::uint16_t>(level + 0.5);
+                mirror.damageKnown = true;
+            } else if (mirror.damagePools == 1) {
+                mirror.damageShield = static_cast<std::uint16_t>(level + 0.5);
+            }
+            if (mirror.damagePools != 0xFF) {
+                ++mirror.damagePools;
+            }
+        }
+    }
     if (resolverContext.componentTag == 0x80C70EDCU && schemaHandle == 0x80C70EDCU) {
         wire::runtime::SchemaView component{}, source{}, reference{};
         wire::runtime::FieldView componentField{}, sourceField{};

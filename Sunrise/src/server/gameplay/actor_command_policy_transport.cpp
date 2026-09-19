@@ -306,7 +306,7 @@ void observed_entity_adapter(const void* context,
         filtered->ignoredRecordMask.reset();
         projected = filtered.get();
     }
-    if (!accept_entity_batch(source.groupSessionId, *projected)) {
+    if (!accept_entity_batch(source, *projected)) {
         report(core::log::Level::debug,
                "ev=entity_identity stage=actor_projection result=unavailable");
     }

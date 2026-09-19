@@ -350,6 +350,14 @@ void push_damage_edges(RuntimeInstance& instance,
 /** Raises observed Type-2 damage pools and lifecycle resets without inferring damage. */
 void push_combatant_damage_edges(RuntimeInstance& instance,
                                  const host::SenseObservationSnapshot& sense) noexcept;
+/** Raises a damage state from an entity's replicated damage levels (fractions of full). */
+void push_entity_damage(RuntimeInstance& instance,
+                        std::uint32_t registryKey,
+                        std::uint8_t slotType,
+                        std::uint16_t slotIndex,
+                        float primary,
+                        float secondary,
+                        std::uint64_t tick) noexcept;
 /** Raises current device values and sequence resets from accepted client reports. */
 void push_device_edges(RuntimeInstance& instance,
                        const host::SenseObservationSnapshot& sense) noexcept;

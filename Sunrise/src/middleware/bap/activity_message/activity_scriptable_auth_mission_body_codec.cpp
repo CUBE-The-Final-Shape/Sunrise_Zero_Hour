@@ -74,26 +74,37 @@ constexpr std::uint32_t kWaypointMarkerMode = 2;
            && writer.write(0, 32) && writer.write(0, kBoolWidth);
 }
 
-/** Writes one of the three complete type-68 state lanes. */
+/** Writes one of the three type-68 directive lanes, including identity, state, progress fields, and HUD marker data. */
 [[nodiscard]] bool
 write_directive_entry(bits::Writer& writer,
                       std::uint32_t nameHash,
                       std::int32_t elementIndex,
                       std::int8_t state,
+                      std::int32_t progressCurrent,
+                      std::int32_t progressTotal,
+                      std::int32_t progressAux0,
+                      std::int32_t progressAux1,
                       const Type2LaneClientRef& target = {},
                       std::uint32_t targetNameHash = kClientRefAbsentKey,
                       std::uint32_t targetBubbleHash = 0,
-                      const Type2LaneClientRef& waypoint = {},
-                      std::span<const std::int32_t, kType68ProgressCount> progress =
-                          std::array<std::int32_t, kType68ProgressCount>{}) noexcept {
+                      const Type2LaneClientRef& waypoint = {}) noexcept {
     if (!writer.write(nameHash, 32)
         || !writer.write(std::bit_cast<std::uint32_t>(elementIndex) + kSigned32Bias, 32)
         || !writer.write(static_cast<std::uint32_t>(state) + 1U, kDirectiveStateWidth)
         || !write_neutral_timed_state(writer)) {
         return false;
     }
-    for (const std::int32_t value : progress) {
-        if (!writer.write(std::bit_cast<std::uint32_t>(value) + kSigned32Bias, 32)) {
+    const std::array<std::int32_t, 4> progressValues{
+        progressCurrent,
+        progressTotal,
+        progressAux0,
+        progressAux1,
+    };
+    for (const std::int32_t value : progressValues) {
+        const std::uint32_t encoded = static_cast<std::uint32_t>(
+            static_cast<std::int64_t>(value) + static_cast<std::int64_t>(kSigned32Bias));
+
+        if (!writer.write(encoded, 32)) {
             return false;
         }
     }
@@ -389,12 +400,15 @@ bool encode_type68(const Type68Preset& preset,
                                               preset.nameHash,
                                               preset.elementIndex,
                                               preset.state,
+                                              preset.progressCurrent,
+                                              preset.progressTotal,
+                                              preset.progressAux0,
+                                              preset.progressAux1,
                                               preset.navpoint,
                                               preset.navpointNameHash,
                                               preset.navpointBubbleHash,
-                                              preset.waypoint,
-                                              preset.progress)
-                      : write_directive_entry(writer, kClientRefAbsentKey, 0, -1);
+                                              preset.waypoint)
+                      : write_directive_entry(writer, kClientRefAbsentKey, 0, -1, 0, 0, 0, 0);
     }
     encoded = encoded && writer.write(preset.visible ? 1U : 0U, kDirectiveActiveIndexWidth);
     return encoded && writer.bit_count() == kType68BitCount && writer.finish(written)

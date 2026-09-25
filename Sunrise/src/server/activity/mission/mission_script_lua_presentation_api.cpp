@@ -84,8 +84,17 @@ namespace {
     const auto* const handle =
         static_cast<const SlotHandle*>(luaL_checkudata(state, 1, kSlotMetatable));
     // Named arguments this call accepts. Any other key is refused.
-    static constexpr std::array<std::string_view, 6> kDeclared{
-        "directive", "state", "navpoint", "audience", "waypoint", "progress"};
+    static constexpr std::array<std::string_view, 9> kDeclared{
+        "directive",
+        "state",
+        "current",
+        "total",
+        "aux0",
+        "aux1",
+        "navpoint",
+        "audience",
+        "waypoint",
+    };
     refuse_unknown_arguments(state, kDeclared);
     SlotDefinition slot{};
     if (!current_slot(state, *handle, slot)) {
@@ -101,10 +110,21 @@ namespace {
     const lua_Integer element = directive_integer(state, -1, "element");
     lua_pop(state, 1);
     const lua_Integer directiveState = optional_integer_argument(state, "state", 0);
+    const lua_Integer current = optional_integer_argument(state, "current", 0);
+    const lua_Integer total = optional_integer_argument(state, "total", 0);
+    const lua_Integer aux0 = optional_integer_argument(state, "aux0", 0);
+    const lua_Integer aux1 = optional_integer_argument(state, "aux1", 0);
     if (slotRow < 0 || slotRow > (std::numeric_limits<std::uint32_t>::max)() || nameHash < 0
         || nameHash > (std::numeric_limits<std::uint32_t>::max)() || element < 0
         || element > (std::numeric_limits<std::int32_t>::max)() || directiveState < 0
-        || directiveState > 2) {
+        || directiveState > 2 || current < (std::numeric_limits<std::int32_t>::min)()
+        || current > (std::numeric_limits<std::int32_t>::max)()
+        || total < (std::numeric_limits<std::int32_t>::min)()
+        || total > (std::numeric_limits<std::int32_t>::max)()
+        || aux0 < (std::numeric_limits<std::int32_t>::min)()
+        || aux0 > (std::numeric_limits<std::int32_t>::max)()
+        || aux1 < (std::numeric_limits<std::int32_t>::min)()
+        || aux1 > (std::numeric_limits<std::int32_t>::max)()) {
         return luaL_error(state, "directive declaration is outside its native field width");
     }
     Impl* const impl = impl_from_state(state);
@@ -118,10 +138,16 @@ namespace {
         || resolved.slotRow != slot.nativeRow) {
         return luaL_error(state, "directive does not belong to this slot");
     }
-    scriptable_auth::Type68Preset preset{.nameHash = resolved.nameHash,
-                                         .elementIndex = resolved.elementIndex,
-                                         .state = static_cast<std::int8_t>(directiveState),
-                                         .visible = true};
+    scriptable_auth::Type68Preset preset{
+        .nameHash = resolved.nameHash,
+        .elementIndex = resolved.elementIndex,
+        .state = static_cast<std::int8_t>(directiveState),
+        .visible = true,
+        .progressCurrent = static_cast<std::int32_t>(current),
+        .progressTotal = static_cast<std::int32_t>(total),
+        .progressAux0 = static_cast<std::int32_t>(aux0),
+        .progressAux1 = static_cast<std::int32_t>(aux1),
+    };
     // Progress rides only on an element that declares a counter; the HUD ignores it otherwise.
     if (push_argument(state, "progress") != LUA_TNIL) {
         luaL_checktype(state, -1, LUA_TTABLE);

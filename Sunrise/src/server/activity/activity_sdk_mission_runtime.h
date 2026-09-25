@@ -117,7 +117,11 @@ select_state(const state::activity_sdk::BoundView& view,
                                         std::uint32_t nameHash,
                                         std::int32_t elementIndex,
                                         std::int8_t state,
-                                        bool visible) noexcept;
+                                        bool visible,
+                                        std::int32_t progressCurrent = 0,
+                                        std::int32_t progressTotal = 0,
+                                        std::int32_t progressAux0 = 0,
+                                        std::int32_t progressAux1 = 0) noexcept;
 
 /** Checks one exact SDK-linked type-38 authored task. */
 [[nodiscard]] SceneStatus objective_reset_availability(const state::activity_sdk::BoundView& view,

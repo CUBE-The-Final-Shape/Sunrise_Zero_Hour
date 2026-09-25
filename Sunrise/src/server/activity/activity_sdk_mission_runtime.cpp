@@ -190,7 +190,11 @@ SceneStatus set_directive(const sdk::BoundView& view,
                           std::uint32_t nameHash,
                           std::int32_t elementIndex,
                           std::int8_t state,
-                          bool visible) noexcept {
+                          bool visible,
+                          std::int32_t progressCurrent,
+                          std::int32_t progressTotal,
+                          std::int32_t progressAux0,
+                          std::int32_t progressAux1) noexcept {
     PreparedScene prepared{};
     const SceneStatus status =
         prepare_directive(view, occurrenceRow, slotRow, nameHash, elementIndex, prepared);
@@ -198,7 +202,15 @@ SceneStatus set_directive(const sdk::BoundView& view,
         return status;
     }
     middleware::bap::activity_message::scriptable_auth::Type68Preset preset{
-        .nameHash = nameHash, .elementIndex = elementIndex, .state = state, .visible = visible};
+        .nameHash = nameHash,
+        .elementIndex = elementIndex,
+        .state = state,
+        .visible = visible,
+        .progressCurrent = progressCurrent,
+        .progressTotal = progressTotal,
+        .progressAux0 = progressAux0,
+        .progressAux1 = progressAux1,
+    };
     std::array<std::byte, middleware::bap::activity_message::scriptable_auth::kType68ByteCount>
         body{};
     std::size_t written = 0;

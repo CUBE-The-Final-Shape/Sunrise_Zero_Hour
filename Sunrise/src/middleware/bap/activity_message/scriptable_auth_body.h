@@ -555,6 +555,14 @@ struct Type68Preset final {
     /** Native directive state: 0 enters, 1 completes, and 2 uses the alternate exit state. */
     std::int8_t state{};
     bool visible{true};
+    /** Current value displayed by a counter-style directive. */
+    std::int32_t progressCurrent{};
+    /** Target/denominator displayed by a counter-style directive. */
+    std::int32_t progressTotal{};
+    /** Unmapped native progress field; defaults to the shipped neutral value. */
+    std::int32_t progressAux0{};
+    /** Unmapped native progress field; defaults to the shipped neutral value. */
+    std::int32_t progressAux1{};
     /** Lane progress values, current then maximum first; the HUD reads them as a counter. */
     std::array<std::int32_t, kType68ProgressCount> progress{};
     /** Authored type-47 destination; absent removes the explicit guidance marker. */

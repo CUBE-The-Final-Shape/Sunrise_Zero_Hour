@@ -727,6 +727,7 @@
     <ClCompile Include="src\client\content\activity\activity_sdk_native_pack_pipeline.cpp" />
     <ClCompile Include="src\client\content\activity\activity_sdk_dialogue_group_index.cpp" />
     <ClCompile Include="src\client\content\activity\activity_sdk_actor_ability_inventory.cpp" />
+    <ClCompile Include="src\client\content\activity\activity_sdk_dialogue_list.cpp" />
     <ClCompile Include="src\client\content\activity\activity_sdk_pack_composer.cpp" />
     <ClCompile Include="src\client\content\activity\activity_sdk_pack_composer_rows.cpp" />
     <ClCompile Include="src\client\content\activity\activity_sdk_pack_composer_validate.cpp" />
@@ -1900,6 +1901,7 @@
     <ClInclude Include="src\client\content\activity\activity_sdk_native_pack_pipeline.h" />
     <ClInclude Include="src\client\content\activity\activity_sdk_dialogue_group_index.h" />
     <ClInclude Include="src\client\content\activity\activity_sdk_actor_ability_inventory.h" />
+    <ClInclude Include="src\client\content\activity\activity_sdk_dialogue_list.h" />
     <ClInclude Include="src\client\content\activity\activity_sdk_pack_composer.h" />
     <ClInclude Include="src\client\content\activity\activity_sdk_pack_composer_internal.h" />
     <ClInclude Include="src\client\content\activity\activity_sdk_policy_input_adapter.h" />
@@ -2073,6 +2075,7 @@
     <ClInclude Include="src\middleware\bap\activity_message\interactable_object_auth.h" />
     <ClInclude Include="src\middleware\bap\activity_message\mission_auth_patch.h" />
     <ClInclude Include="src\middleware\bap\activity_message\mission_effect_auth.h" />
+    <ClInclude Include="src\middleware\bap\activity_message\toggle_auth.h" />
     <ClInclude Include="src\middleware\bap\activity_message\music_section_auth.h" />
     <ClInclude Include="src\middleware\bap\activity_message\roster_presence.h" />
     <ClInclude Include="src\middleware\bap\activity_message\scene_events_auth.h" />

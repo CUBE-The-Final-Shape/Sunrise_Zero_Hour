@@ -20,6 +20,8 @@ struct Settings {
      * On by default; a client stand-in until the unlock banks carry every gate the nodes read.
      */
     bool revealLoreBooks{true};
+	
+	bool pinReplicatedRecord{true};
 };
 
 } // namespace sunrise::core::settings::client

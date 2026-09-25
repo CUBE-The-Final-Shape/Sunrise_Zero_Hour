@@ -1,5 +1,6 @@
 #pragma once
 
+#include "../../hooking/detour.h"
 #include "../../patterns/image_scan.h"
 
 namespace sunrise::client::hooks::bootflow {
@@ -8,6 +9,23 @@ using patterns::resolve_relative;
 using patterns::scan_main_image_unique;
 using patterns::signature;
 using patterns::signature_length;
+
+enum class StageResult : unsigned char {
+    /** The target is missing. The fix reported that itself and staged nothing. */
+    unavailable,
+    /** An earlier install already attached this fix, so there is nothing to stage. */
+    attached,
+    /** The spec is filled and the fix wants attaching. */
+    staged,
+};
+
+[[nodiscard]] StageResult stage_owner_activity_slot(hooking::detour::Spec& spec) noexcept;
+
+/** Takes the owner activity slot force's attached handle, or a detached one. */
+void publish_owner_activity_slot(const hooking::detour::Handle& handle) noexcept;
+
+/** Detaches the owner activity slot force. */
+void uninstall_owner_activity_slot() noexcept;
 
 /**
  * Finds the boot-flow step accessor behind `in_world`.

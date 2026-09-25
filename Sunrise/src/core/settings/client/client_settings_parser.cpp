@@ -13,6 +13,7 @@ bool Parser::client_settings(client::Settings& output) noexcept {
     bool hasCustomBootflowTextures = false;
     bool hasSocketMenuRouting = false;
     bool hasRevealLoreBooks = false;
+	bool hasPinReplicatedRecord = false;
     if (consume('}')) {
         return true;
     }
@@ -46,6 +47,11 @@ bool Parser::client_settings(client::Settings& output) noexcept {
                 return false;
             }
             hasRevealLoreBooks = true;
+        } else if (key == "pin_replicated_record") {
+            if (hasPinReplicatedRecord || !boolean(candidate.pinReplicatedRecord)) {
+                return false;
+            }
+            hasPinReplicatedRecord = true;
         } else if (!skip_value(0)) {
             return false;
         }

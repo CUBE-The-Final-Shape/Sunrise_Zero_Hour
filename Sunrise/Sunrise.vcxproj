@@ -264,6 +264,7 @@
     <ClCompile Include="src\client\hooks\external_server\external_server_setopt_guard.cpp" />
     <ClCompile Include="src\client\hooks\bootflow\bootflow_hook_lifecycle.cpp" />
     <ClCompile Include="src\client\hooks\bootflow\bootflow_texture_override.cpp" />
+	<ClCompile Include="src\client\hooks\bootflow\owner_activity_slot.cpp" />
     <ClCompile Include="src\client\hooks\bootflow\lifetime_gate_probe.cpp" />
     <ClCompile Include="src\client\hooks\bootflow\world_step.cpp" />
     <ClCompile Include="src\client\hooks\bootflow\spawn\slice_set_sample.cpp" />

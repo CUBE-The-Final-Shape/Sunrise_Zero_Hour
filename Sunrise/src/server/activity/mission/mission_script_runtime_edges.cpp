@@ -222,6 +222,7 @@ void push_trigger_edges(RuntimeInstance& instance,
     for (std::size_t index = 0; index < sense.observationCount; ++index) {
         const host::SenseObservation& observation = sense.observations[index];
         if (observation.key.slotType != kTriggerOccupancySlotType
+            || !observation.hasGeneration
             || observation.valueCount < kTriggerOccupancyValueCount
             || observation.firstValue + kTriggerOccupancyValueCount > sense.valueCount) {
             continue;
@@ -250,10 +251,15 @@ void push_trigger_edges(RuntimeInstance& instance,
             }
             spare->registryKey = observation.key.registryKey;
             spare->objectTag = observation.key.objectTag;
+            spare->generationPlusOne = observation.generationPlusOne;
             spare->slotIndex = observation.key.slotIndex;
             spare->occupied = occupied;
             spare->used = true;
             continue;
+        }
+        if (slot->generationPlusOne != observation.generationPlusOne) {
+            slot->generationPlusOne = observation.generationPlusOne;
+            slot->occupied = false;
         }
         if (slot->occupied == occupied) {
             continue;

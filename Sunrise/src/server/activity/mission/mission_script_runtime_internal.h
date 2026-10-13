@@ -112,6 +112,7 @@ constexpr std::uint64_t kHostCommitTimeoutMs = 2'000;
 struct TriggerOccupancy final {
     std::uint32_t registryKey{};
     std::uint32_t objectTag{};
+    std::uint32_t generationPlusOne{};
     std::uint16_t slotIndex{};
     bool occupied{};
     bool used{};
